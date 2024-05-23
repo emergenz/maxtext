@@ -191,6 +191,11 @@ class AttentionOp(nn.Module):
       return self.cudnn_flash_attention(query, key, value, decoder_segment_ids, model_mode), None, None
     else:
       raise ValueError(f"Unexpected attention kernel {self.attention_kernel=}.")
+  def mqa_attention_ref(self, query: Array, key: Array, value: Array, decoder_segment_ids: Array) -> tuple[Array, Array, Array]:
+      lengths = decoder_segment_ids.sum(axis=1)
+      vmap_mqa_ref = jax.vmap(mqa_reference, in_axes=[1, 1, 1, None], out_axes=2)
+      o, m, l  = vmap_mqa_ref(query, key, value, lengths)
+      return o, m, l
   
   def ragged_attention(self, query: Array, key: Array, value: Array, decoder_segment_ids: Array) -> tuple[Array, Array, Array]:
     """Ragged Attention."""
@@ -199,12 +204,12 @@ class AttentionOp(nn.Module):
         shard_map,
         mesh=self.mesh,
         in_specs=(
-            P(None, 'tensor', None, None),
-            P(None, 'tensor', None, None),
-            P(None, 'tensor', None, None),
+            P(None, None, None, None),
+            P(None, None, None, None),
+            P(None, None, None, None),
             P(None),
         ),
-        out_specs=P(None, None, 'tensor', None),
+        out_specs=P(None, None, None, None),
         check_rep=False,
     )
     def wrap_ragged_attention(query, key, value, decoder_segment_ids):
@@ -881,7 +886,7 @@ class AttentionOp(nn.Module):
         return prefill_unnormalized_output / prefill_exponentials_sum
       return prefill_unnormalized_output
 
-    ar_unnormalized_output, ar_exponentials_max, ar_exponentials_sum = self.apply_attention(
+    ar_output, ar_exponentials_max, ar_exponentials_sum = self.apply_attention(
         query=query,
         key=ar_kv_cache[0],
         value=ar_kv_cache[1],
@@ -889,16 +894,13 @@ class AttentionOp(nn.Module):
         model_mode=model_mode,
         use_ragged=True,
     )
-    if ar_unnormalized_output is not None:
-      # prefill_exponentials_max = jnp.expand_dims(prefill_exponentials_max, axis=-1)
-      # prefill_exponentials_sum = jnp.expand_dims(prefill_exponentials_sum, axis=-1)
-      ar_exponentials_max = jnp.expand_dims(ar_exponentials_max, axis=-1)
-      ar_exponentials_sum = jnp.expand_dims(ar_exponentials_sum, axis=-1)
-      unnormalized_outputs = [prefill_unnormalized_output, ar_unnormalized_output]
+    if ar_output is not None:
+      ar_output = ar_output * ar_exponentials_sum
+      unnormalized_outputs = [prefill_unnormalized_output, ar_output]
       exponentials_maxes = [prefill_exponentials_max, ar_exponentials_max]
       exponentials_sums = [prefill_exponentials_sum, ar_exponentials_sum]
       print(f"{prefill_unnormalized_output.shape=}")
-      print(f"{ar_unnormalized_output.shape=}")
+      print(f"{ar_output.shape=}")
       print(f"{prefill_exponentials_max.shape=}")
       print(f"{ar_exponentials_max.shape=}")
       print(f"{prefill_exponentials_sum.shape=}")
