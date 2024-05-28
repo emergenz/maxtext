@@ -42,39 +42,16 @@ def mqa_reference(
     max logit ([batch_size, num_heads]) and softmax denominator ([batch_size,
     num_heads]).
   """
-  
-  # loads the entire batch to its full size each time
-  # expects all the entries to be left-aligned, but not necessarily any padding
-  print("ref - q.shape:", q.shape)              
-  print("ref - k.shape:", k.shape)              
-  print("ref - v.shape:", v.shape)              
-  print("ref - lengths.shape:", lengths.shape)  
-  # ref - q.shape: (4, 1, 128)
-  # ref - k.shape: (4, 1024, 128)
-  # ref - v.shape: (4, 1024, 128)
-  # ref - lengths.shape: (4,)
-
-  # computes the logits by multiplying q and k
   logits = jnp.einsum(
       "bhd,btd->bht", q.astype(jnp.float32), k.astype(jnp.float32)
   )
-
-  # Creates the mask based on the sequence length of each entry in `lengths` in k
   mask = jnp.arange(k.shape[1])[None] < lengths[:, None]        
 
-  # Mask out some logits by making all non-used entries a very negative number
   logits = logits + jnp.where(mask, 0.0, mask_value)[:, None]   
-
-  # Get logit max
   logits_max = logits.max(axis=-1)                              
 
-  # Get unnormalized logits by subtracting the max and taking exp of result
   unnormalized = jnp.exp(logits - logits_max[..., None])        
-
-  # Sum across the last dimension of unnormalized logits to get the denominator(?)
   denominator = unnormalized.sum(axis=-1)                       
-
-  # Does this renormalize the output? 
   o = (                                                         
       jnp.einsum("bht,btd->bhd", unnormalized.astype(v.dtype), v)
       / denominator[..., None]
@@ -112,7 +89,6 @@ def ragged_flash_attention_kernel(
     v = v_ref[...].astype(jnp.float32)
     m_prev, l_prev = m_ref[...], l_ref[...]
 
-    # multiply q and k
     qk = lax.dot_general(
         q, k, (((1,), (1,)), ((), ())), preferred_element_type=jnp.float32
     )
@@ -150,14 +126,6 @@ def ragged_mqa(
 ) -> tuple[jax.Array, jax.Array, jax.Array]:
   """Ragged multi query attention."""
   batch_size, num_heads, head_dim = q.shape 
-  print("ragged kernel - q.shape:", q.shape)              
-  print("ragged kernel - k.shape:", k.shape)              
-  print("ragged kernel - v.shape:", v.shape)              
-  print("ragged kernel - lengths.shape:", lengths.shape)  
-  # ragged kernel - q.shape: (4, 1, 128)
-  # ragged kernel - k.shape: (4, 1024, 128)
-  # ragged kernel - v.shape: (4, 1024, 128)
-  # ragged kernel - lengths.shape: (4,)
   assert lengths.shape == (batch_size,)
   assert lengths.dtype == jnp.int32
   seq_len = k.shape[1]  
@@ -207,4 +175,4 @@ def ragged_mqa(
           jax.ShapeDtypeStruct((batch_size, num_heads, head_dim), jnp.float32),
       ],
   )(lengths, q, k, v)
-  return out, m[..., 0], l[..., 0]  # o=q (b,n,d)?, m=(b,n,d), l=(b,n,d)
+  return out, m[..., 0], l[..., 0]
