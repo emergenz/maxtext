@@ -174,13 +174,12 @@ class AttentionOp(nn.Module):
     print(f"apply_attention - {value.shape=}")
     print(f"apply_attention - {model_mode=}")
     length = query.shape[-3]
-    # if use_ragged and model_mode == common_types.MODEL_MODE_AUTOREGRESSIVE and decoder_segment_ids is not None:
-    if False:
-      query = jnp.swapaxes(query, 1, 2) # bsnd -> bnsd
-      key = jnp.swapaxes(key, 1, 2)
-      value = jnp.swapaxes(value, 1, 2)
+    if (
+      use_ragged 
+      and model_mode == common_types.MODEL_MODE_AUTOREGRESSIVE 
+      and decoder_segment_ids is not None
+    ):
       return self.ragged_attention(query, key, value, decoder_segment_ids)
-      # return self.mqa_attention_ref(query, key, value, decoder_segment_ids)
     elif (
         self.attention_kernel == "dot_product"
         or (self.attention_kernel == "autoselected" and model_mode == common_types.MODEL_MODE_AUTOREGRESSIVE)
@@ -214,45 +213,32 @@ class AttentionOp(nn.Module):
   def ragged_attention(self, query: Array, key: Array, value: Array, decoder_segment_ids: Array) -> tuple[Array, Array, Array]:
     """Ragged Attention."""
 
+    # TODO(Pate): better way of doing this sharding
     @functools.partial(
         shard_map,
         mesh=self.mesh,
         in_specs=(
-            P(None, None, None, None),
-            P(None, None, None, None),
-            P(None, None, None, None),
+            P(None, 'tensor', None, None),
+            P(None, 'tensor', None, None),
+            P(None, 'tensor', None, None),
             P(None),
         ),
-        out_specs=P(None, None, None, None),
+        out_specs=P(None, None, 'tensor', None),
         check_rep=False,
     )
     def wrap_ragged_attention(query, key, value, decoder_segment_ids):
       lengths = decoder_segment_ids.sum(axis=1)
-      print(f"wrap ragged attention - {query.shape}") # bnsd
-      print(f"wrap ragged attention - {key.shape}") # bnsd
-      print(f"wrap ragged attention - {value.shape}") # bnsd
-      print(f"wrap ragged attention - {lengths.shape}") # bnsd
-      print("wrap ragged attention - l:", lengths) 
-      # wrap ragged attention - q.shape: (16, 32,    1, 128)     
-      # wrap ragged attention - k.shape: (16, 32, 1024, 128)
-      # wrap ragged attention - v.shape: (16, 32, 1024, 128)
-      # wrap ragged attention - l.shape: (16,)
 
       vmap_ragged_mqa = jax.vmap(ragged_mqa, in_axes=[1, 1, 1, None], out_axes=2)
-      # o,m,l  = vmap_ragged_mqa(jnp.swapaxes(query, 1, 2), jnp.swapaxes(key, 1, 2), jnp.swapaxes(value, 1, 2), lengths)
-      o,m,l  = vmap_ragged_mqa(query, key, value, lengths)
-      # print(f"ragged_attention result - {o.shape=}")
-      # print(f"ragged_attention result - {m.shape=}")
-      # print(f"ragged_attention result - {l.shape=}")
-      # ragged_attention result - o.shape=(16, 32, 1, 128)
-      # ragged_attention result - m.shape=(16, 32, 1)
-      # ragged_attention result - l.shape=(16, 32, 1)
-      # return jnp.swapaxes(o, 1, 2), jnp.swapaxes(m, 1, 2), jnp.swapaxes(l, 1, 2)
-      print(f"wrap_ragged_attention - {o.shape=}")
-      print(f"wrap_ragged_attention - {m.shape=}")
-      print(f"wrap_ragged_attention - {l.shape=}")
+      o, m, l  = vmap_ragged_mqa(query, key, value, lengths)
+      m = jnp.expand_dims(m, axis=-1)
+      l = jnp.expand_dims(l, axis=-1)
+      o = o * l 
       return o, m, l
 
+    query = jnp.swapaxes(query, 1, 2)
+    key = jnp.swapaxes(key, 1, 2)
+    value = jnp.swapaxes(value, 1, 2)
     return wrap_ragged_attention(query, key, value, decoder_segment_ids)
 
   def tpu_flash_attention(self, query: Array, key: Array, value: Array, decoder_segment_ids: Array | None) -> Array:
@@ -889,25 +875,12 @@ class AttentionOp(nn.Module):
         use_ragged=True,
     )
     if ar_output is not None:
-      ar_output = ar_output * ar_exponentials_sum
       unnormalized_outputs = [prefill_unnormalized_output, ar_output]
       exponentials_maxes = [prefill_exponentials_max, ar_exponentials_max]
       exponentials_sums = [prefill_exponentials_sum, ar_exponentials_sum]
-      print(f"{prefill_unnormalized_output.shape=}")
-      print(f"{ar_output.shape=}")
-      print(f"{prefill_exponentials_max.shape=}")
-      print(f"{ar_exponentials_max.shape=}")
-      print(f"{prefill_exponentials_sum.shape=}")
-      print(f"{ar_exponentials_sum.shape=}")
       return self.normalize_attention(unnormalized_outputs, exponentials_maxes, exponentials_sums)
     else:
       return prefill_unnormalized_output / prefill_exponentials_sum
-
-
-    unnormalized_outputs = [prefill_unnormalized_output, ar_unnormalized_output]
-    exponentials_maxes = [prefill_exponentials_max, ar_exponentials_max]
-    exponentials_sums = [prefill_exponentials_sum, ar_exponentials_sum]
-    return self.normalize_attention(unnormalized_outputs, exponentials_maxes, exponentials_sums)
 
 
 class Attention(nn.Module):
@@ -1090,9 +1063,6 @@ class Attention(nn.Module):
       value = self.kv_projection(inputs_kv, proj_name="value")
 
     # apply ROPE
-    print(f"query before RotaryEmbedding: {query.shape=}")
-    print(f"key before RotaryEmbedding: {key.shape=}")
-    print(f"value before RotaryEmbedding: {value.shape=}")
     query = RotaryEmbedding(embedding_dims=self.head_dim, name="query_rotary")(inputs=query, position=inputs_positions)
     key = self.key_rotary(key, inputs_positions)
 
