@@ -115,6 +115,8 @@ class AttentionOp(nn.Module):
   max_prefill_predict_length: int = -1
   float32_logits: bool = False
   flash_axis_names: AxisNames = (BATCH, HEAD, LENGTH, D_KV)
+  ragged_qkv_axis_names: AxisNames = (CACHE_BATCH, CACHE_HEADS, CACHE_SEQUENCE, CACHE_KV)
+  ragged_lengths_names: AxisNames = (CACHE_BATCH,)
   kv_cache_logical_layout: AxisNames = (CACHE_BATCH, CACHE_SEQUENCE, CACHE_HEADS, CACHE_KV)
   prefill_key_axis_order: AxisIdxes = (1, 2, 0, 3)
   prefill_value_axis_order: AxisIdxes = (1, 2, 0, 3)
@@ -213,17 +215,19 @@ class AttentionOp(nn.Module):
   def ragged_attention(self, query: Array, key: Array, value: Array, decoder_segment_ids: Array) -> tuple[Array, Array, Array]:
     """Ragged Attention."""
 
-    # TODO(Pate): better way of doing this sharding
+    ragged_qkv = nn.logical_to_mesh_axes(self.ragged_qkv_axis_names)
+    ragged_lengths = nn.logical_to_mesh_axes(self.ragged_lengths_names)
+    ragged_output = nn.logical_to_mesh_axes(self.kv_cache_logical_layout)
     @functools.partial(
         shard_map,
         mesh=self.mesh,
         in_specs=(
-            P(None, 'tensor', None, None),
-            P(None, 'tensor', None, None),
-            P(None, 'tensor', None, None),
-            P(None),
+            ragged_qkv,
+            ragged_qkv,
+            ragged_qkv,
+            ragged_lengths,
         ),
-        out_specs=P(None, None, 'tensor', None),
+        out_specs=ragged_output,
         check_rep=False,
     )
     def wrap_ragged_attention(query, key, value, decoder_segment_ids):
