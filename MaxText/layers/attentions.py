@@ -170,11 +170,6 @@ class AttentionOp(nn.Module):
 
   def apply_attention(self, query: Array, key: Array, value: Array, decoder_segment_ids: Array | None, model_mode: str, use_ragged: str = False):
     self.check_attention_inputs(query, key, value)
-    print()
-    print(f"apply_attention - {query.shape=}")
-    print(f"apply_attention - {key.shape=}")
-    print(f"apply_attention - {value.shape=}")
-    print(f"apply_attention - {model_mode=}")
     length = query.shape[-3]
     if (
       use_ragged 
@@ -433,9 +428,6 @@ class AttentionOp(nn.Module):
     Returns:
       reshaped kv as [b, ..., s, n, d]
     """
-    print()
-    print(f"revert_kvlen_axis - {kv.shape=}")
-    print(f"revert_kvlen_axis - {cached_axis_order=}")
     return jax.numpy.moveaxis(kv, (0, 1, 2, 3), cached_axis_order)
 
   def move_kvlen_axis(self, kv, cached_axis_order):
@@ -447,16 +439,11 @@ class AttentionOp(nn.Module):
     Returns:
       reshaped kv as [b, ..., n, d, s]
     """
-    print()
-    print(f"move_kvlen_axis - {kv.shape=}")
-    print(f"move_kvlen_axis - {cached_axis_order=}")
     axis_order_to_index_mapping = {a:i for i, a in enumerate(cached_axis_order)}
     axis_destination = tuple([i for a, i in sorted(axis_order_to_index_mapping.items())])
     return jax.numpy.moveaxis(kv, (0, 1, 2, 3), axis_destination)
 
   def cached_kv_layout(self, kv_layout, cached_axis_order):
-    print(f"cached_kv_layout - {kv_layout=}")
-    print(f"cached_kv_layout - {cached_axis_order=}")
     return tuple([kv_layout[i] for i in cached_axis_order])
 
   def cached_kv_shape(self, kv_shape, cached_axis_order):
@@ -758,7 +745,6 @@ class AttentionOp(nn.Module):
     Raises:
       ValueError: when key/value shape is not [batch, 1, num_heads, heads_dim].
     """
-    print(f"kv_cache_autoregressive - {key.shape=}")
     batch, sequence, heads, kv_head_size = key.shape
     if sequence != 1:
       raise ValueError(f"Sequence length should be 1 during autoregression, got {sequence=}")
@@ -848,12 +834,6 @@ class AttentionOp(nn.Module):
   @nn.compact
   def __call__(self, query, key, value, decoder_segment_ids, model_mode):
     prefill_kv_cache, ar_kv_cache = self.kv_cache(key, value, decoder_segment_ids, model_mode)
-
-    print(f"{prefill_kv_cache[0].shape=}")
-    print(f"{prefill_kv_cache[1].shape=}")
-    if ar_kv_cache is not None:
-      print(f"{ar_kv_cache[0].shape=}")
-      print(f"{ar_kv_cache[1].shape=}")
 
     prefill_unnormalized_output, prefill_exponentials_max, prefill_exponentials_sum = self.apply_attention(
         query=query,
