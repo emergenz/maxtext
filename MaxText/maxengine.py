@@ -247,28 +247,85 @@ class MaxEngine(engine_api.Engine):
     unboxed_prefix = max_utils.unbox_logicallypartioned(prefix)
 
     def copy(path, partial_cache, full_cache, annotations):
+      # print()
+      # print(f"copy - {path=}")
+      # print(f"copy - {partial_cache.shape=}")
+      # print(f"copy - {full_cache.shape=}")
+      # print(f"copy - {annotations=}")
+      """
+        operand (Array | ndarray) - an array to slice.
+        update (jax.typing.ArrayLike) - an array containing the new values to write onto operand.
+        index (jax.typing.ArrayLike) - a single scalar index
+        axis (int) - the axis of the update.
+
+      x = jnp.zeros((4, 4))
+      y = jnp.ones(4)
+      dynamic_update_index_in_dim(x, y, 1, axis=0)
+      Array([[0., 0., 0., 0.],
+      [1., 1., 1., 1.],
+      [0., 0., 0., 0.],
+      [0., 0., 0., 0.]], dtype=float32)
+      """
+      
+      """
+      cache_ar_index - partial_cache.shape=(1,), full_cache.shape=(1,), annotations=()
+      cached_ar_key - partial_cache.shape=(1024, 32, 1, 128), full_cache.shape=(1024, 32, 4, 128), annotations=('cache_sequence', 'cache_heads', 'cache_batch', 'cache_kv')
+      cached_ar_value - partial_cache.shape=(1024, 32, 1, 128), full_cache.shape=(1024, 32, 4, 128), annotations=('cache_sequence', 'cache_heads', 'cache_batch', 'cache_kv')
+      cache_ar_segment_id - partial_cache.shape=(1, 1024), full_cache.shape=(4, 1024), annotations=('cache_batch', 'cache_sequence')
+
+      cache_prefill_segment_id - partial_cache.shape=(1, 1024), full_cache.shape=(4, 1024), annotations=('cache_batch', 'cache_sequence')
+      cached_prefill_key - partial_cache.shape=(1024, 32, 1, 128), full_cache.shape=(1024, 32, 4, 128), annotations=('cache_sequence', 'cache_heads', 'cache_batch', 'cache_kv')
+      cached_prefill_value - partial_cache.shape=(1024, 32, 1, 128), full_cache.shape=(1024, 32, 4, 128), annotations=('cache_sequence', 'cache_heads', 'cache_batch', 'cache_kv')
+
+      cached_ar_key_scale - 
+      cached_ar_value_scale - 
+      cached_prefill_key_scale - 
+      cached_prefill_value_scale - 
+      """
+
+      
       path_key = path[-1].key
-      if path_key in ["cache_ar_index", "cached_ar_key", "cached_ar_value", "cached_ar_key_scale", "cached_ar_value_scale"]:
+      print(f"\n\n{path_key=}")
+      if path_key == "cache_ar_index":
+        jax.debug.print("cache_ar_index: {}", full_cache)
+      if path_key in ["cache_ar_index", "cached_ar_key_scale", "cached_ar_value_scale"]:
         return full_cache  # we don't even zero these out because we can mask them out.
 
       batch_idx = annotations.index("cache_batch") if "cache_batch" in annotations else -1
       if batch_idx < 0:
         raise ValueError(f"Batch index {batch_idx=} shouldn't be less than zero for {path_key}, got {annotations=}")
 
-      if path_key == "cache_ar_segment_id":
+      print(f"{batch_idx=}")
+      if path_key == "cached_ar_key": # cached_ar_key - partial_cache.shape=(1024, 32, 1, 128)
+        s = list(full_cache.shape)
+        s[batch_idx] = 1
+        zeros = jnp.zeros(tuple(s), dtype=jnp.bfloat16)
+        return jax.lax.dynamic_update_index_in_dim(full_cache, zeros, slot, batch_idx)
+        # return full_cache
+      elif path_key == "cached_ar_value": # cached_ar_key - partial_cache.shape=(1024, 32, 1, 128)
+        s = list(full_cache.shape)
+        s[batch_idx] = 1
+        zeros = jnp.zeros(tuple(s), dtype=jnp.bfloat16)
+        return jax.lax.dynamic_update_index_in_dim(full_cache, zeros, slot, batch_idx)
+        # return full_cache
+      elif path_key == "cache_ar_segment_id": # cache_ar_segment_id - full_cache.shape=(4, 1024)
         ### goal: zero this out in case there is existing data
+        print(f"cache_ar_segment_id - {full_cache.shape=}") 
         s = list(full_cache.shape)
         s[batch_idx] = 1
         zeros = jnp.zeros(tuple(s), dtype=jnp.int32)
+        print(f"cache_ar_segment_id - {zeros.shape=}") 
         return jax.lax.dynamic_update_index_in_dim(full_cache, zeros, slot, batch_idx)
-      elif path_key == "cache_prefill_segment_id":
+      elif path_key == "cache_prefill_segment_id":  # partial_cache.shape=(1, 1024)
+        print(f"cache_prefill_segment_id - {full_cache.shape=}")
         s = list(full_cache.shape)
         s[batch_idx] = 1
         zeros = jnp.zeros(tuple(s), dtype=jnp.int32)
         ## zero out in case prefill cache is too small to cover
         full_cache = jax.lax.dynamic_update_index_in_dim(full_cache, zeros, slot, batch_idx)
-        ## copy prefill cachce
+        ## copy prefill cache
         full_cache = jax.lax.dynamic_update_index_in_dim(full_cache, partial_cache, slot, batch_idx)
+        print(f"cache_prefill_segment_id - {zeros.shape=}")
         return full_cache
       elif path_key in [
           "cached_prefill_key",
@@ -283,8 +340,17 @@ class MaxEngine(engine_api.Engine):
     inserted_cache = jax.tree_util.tree_map_with_path(
         copy, unboxed_prefix["cache"], decode_state["cache"], self.kv_cache_annotations_named
     )
-    inserted_logits = jax.lax.dynamic_update_index_in_dim(decode_state["logits"], unboxed_prefix["logits"], slot, 0)
-    inserted_next_pos = jax.lax.dynamic_update_index_in_dim(decode_state["next_pos"], unboxed_prefix["next_pos"], slot, 0)
+    # s = [1024, 32, 4, 128]
+    # s[2] = 1
+    # zero_logits = jnp.zeros(tuple(s), dtype=jnp.bfloat16)
+    # jax.lax.dynamic_update_index_in_dim(decode_state["logits"], unboxed_prefix["logits"], slot, 0)
+    
+    inserted_logits = jax.lax.dynamic_update_index_in_dim(decode_state["logits"], unboxed_prefix["logits"], slot, 0)  # inserted_logits.shape=(4, 1, 32000)
+    print(f"{inserted_logits.shape=}")
+    jax.debug.print("unboxed_prefix['next_pos']: {}", unboxed_prefix["next_pos"])
+    jax.debug.print("decode_state['next_pos']: {}", decode_state["next_pos"])
+    # inserted_next_pos = jax.lax.dynamic_update_index_in_dim(decode_state["next_pos"], unboxed_prefix["next_pos"], slot, 0)
+    inserted_next_pos = jax.lax.dynamic_update_index_in_dim(decode_state["next_pos"], jnp.zeros((1), dtype=jnp.int32), slot, 0)
     inserted_generated_tokens = jax.lax.dynamic_update_index_in_dim(
         decode_state["generated_tokens"], unboxed_prefix["generated_tokens"], slot, 0
     )
@@ -294,12 +360,14 @@ class MaxEngine(engine_api.Engine):
     inserted_next_pos = jax.lax.with_sharding_constraint(inserted_next_pos, self.replicated_sharding)
     inserted_cache = jax.lax.with_sharding_constraint(inserted_cache, self.kv_cache_shardings)
 
-    return {
+    result = {
         "logits": inserted_logits,
         "cache": inserted_cache,
         "next_pos": inserted_next_pos,
         "generated_tokens": inserted_generated_tokens,
     }
+    jax.debug.print("next_pos: {}", result["next_pos"])
+    return result
 
   def get_prefix_destination_sharding(self) -> Any:
     return jax.sharding.NamedSharding(mesh=self.mesh, spec=jax.sharding.PartitionSpec())

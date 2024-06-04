@@ -171,11 +171,15 @@ class AttentionOp(nn.Module):
   def apply_attention(self, query: Array, key: Array, value: Array, decoder_segment_ids: Array | None, model_mode: str, use_ragged: str = False):
     self.check_attention_inputs(query, key, value)
     length = query.shape[-3]
+    # if False:
     if (
       use_ragged 
       and model_mode == common_types.MODEL_MODE_AUTOREGRESSIVE 
       and decoder_segment_ids is not None
     ):
+      lengths = decoder_segment_ids.sum(axis=1)
+      jax.debug.print("decoder_segment_ids.sum: {}", lengths)
+      jax.debug.print("decoder_segment_ids: {}", decoder_segment_ids[:,:64])
       return self.ragged_attention(query, key, value, decoder_segment_ids)
     elif (
         self.attention_kernel == "dot_product"
@@ -677,6 +681,9 @@ class AttentionOp(nn.Module):
       one_token_key_shaped_for_cache, one_token_key_scale = quantizations.quantize_kv(one_token_key_shaped_for_cache, ar_key_layout.index(CACHE_KV))
       one_token_value_shaped_for_cache, one_token_value_scale = quantizations.quantize_kv(one_token_value_shaped_for_cache, ar_value_layout.index(CACHE_KV))
 
+
+    
+    jax.debug.print("one_hot_indices: {}", one_hot_indices)
     one_hot_indices = one_hot_indices.astype(int)
 
     ar_key = cached_key_var.value
@@ -765,6 +772,8 @@ class AttentionOp(nn.Module):
         cached_ar_segment_id.value, active_indicator, jnp.squeeze(cache_ar_index.value), 1
     )
     cache_ar_index.value = jnp.mod(cache_ar_index.value + 1, self.max_target_length - self.max_prefill_predict_length)
+    jax.debug.print("cache_ar_index.value: {}", cache_ar_index.value)
+    # jax.debug.print("cache_ar_index: {}", cache_ar_index)
 
     # Prep and return both prefill and ar caches
     cached_prefill_key_var, cached_prefill_value_var, cached_prefill_segment_id = self._get_prefill_cache(
