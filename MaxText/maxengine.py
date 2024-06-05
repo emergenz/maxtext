@@ -296,7 +296,10 @@ class MaxEngine(engine_api.Engine):
         raise ValueError(f"Batch index {batch_idx=} shouldn't be less than zero for {path_key}, got {annotations=}")
 
       print(f"{batch_idx=}")
-      if path_key == "cached_ar_key": # cached_ar_key - partial_cache.shape=(1024, 32, 1, 128)
+      if path_key == "cache_ar_lengths": 
+        jax.debug.print("cache_ar_lengths: {}", full_cache)
+        return jax.lax.dynamic_update_index_in_dim(full_cache, 0, slot, 0)
+      elif path_key == "cached_ar_key": # cached_ar_key - partial_cache.shape=(1024, 32, 1, 128)
         s = list(full_cache.shape)
         s[batch_idx] = 1
         zeros = jnp.zeros(tuple(s), dtype=jnp.bfloat16)

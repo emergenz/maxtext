@@ -168,7 +168,7 @@ class AttentionOp(nn.Module):
 
     return jnp.where(output_mask, 0.0, DEFAULT_MASK_VALUE) if output_mask is not None else None
 
-  def apply_attention(self, query: Array, key: Array, value: Array, decoder_segment_ids: Array | None, model_mode: str, use_ragged: str = False):
+  def apply_attention(self, query: Array, key: Array, value: Array, decoder_segment_ids: Array | None, lengths : Array | None, model_mode: str, use_ragged: str = False):
     self.check_attention_inputs(query, key, value)
     length = query.shape[-3]
     # if False:
@@ -177,10 +177,17 @@ class AttentionOp(nn.Module):
       and model_mode == common_types.MODEL_MODE_AUTOREGRESSIVE 
       and decoder_segment_ids is not None
     ):
-      lengths = decoder_segment_ids.sum(axis=1)
+      # lengths = decoder_segment_ids.sum(axis=1)
       jax.debug.print("decoder_segment_ids.sum: {}", lengths)
       jax.debug.print("decoder_segment_ids: {}", decoder_segment_ids[:,:64])
-      return self.ragged_attention(query, key, value, decoder_segment_ids)
+      # lengths = 
+      print(model_mode)
+      print(f"{query.shape=}")
+      print(f"{key.shape=}")
+      print(f"{value.shape=}")
+      print(f"{decoder_segment_ids.shape=}")
+      print()
+      return self.ragged_attention(query, key, value, decoder_segment_ids, lengths)
     elif (
         self.attention_kernel == "dot_product"
         or (self.attention_kernel == "autoselected" and model_mode == common_types.MODEL_MODE_AUTOREGRESSIVE)
@@ -211,7 +218,7 @@ class AttentionOp(nn.Module):
       o, m, l  = vmap_mqa_ref(query, key, value, lengths)
       return o, m, l
   
-  def ragged_attention(self, query: Array, key: Array, value: Array, decoder_segment_ids: Array) -> tuple[Array, Array, Array]:
+  def ragged_attention(self, query: Array, key: Array, value: Array, decoder_segment_ids: Array, lengths: Array) -> tuple[Array, Array, Array]:
     """Ragged Attention."""
 
     ragged_qkv = nn.logical_to_mesh_axes(self.ragged_qkv_axis_names)
@@ -230,7 +237,7 @@ class AttentionOp(nn.Module):
         check_rep=False,
     )
     def wrap_ragged_attention(query, key, value, decoder_segment_ids):
-      lengths = decoder_segment_ids.sum(axis=1)
+      # lengths = decoder_segment_ids.sum(axis=1)
 
       vmap_ragged_mqa = jax.vmap(ragged_mqa, in_axes=[1, 1, 1, None], out_axes=2)
       o, m, l  = vmap_ragged_mqa(query, key, value, lengths)
@@ -569,6 +576,13 @@ class AttentionOp(nn.Module):
         (cache_logical_shape[0], cache_length),
         jnp.int32,
     )
+    cache_lengths = self.variable(
+        "cache",
+        "cache_ar_lengths",
+        nn.with_logical_partitioning(jnp.zeros, (CACHE_BATCH, )),
+        (cache_logical_shape[0], ),
+        jnp.int32,
+    )
 
     if self.quantize_kvcache:
 
@@ -597,7 +611,7 @@ class AttentionOp(nn.Module):
     cache_index = self.variable("cache", "cache_ar_index", nn.with_logical_partitioning(jnp.zeros, ()), (1,), jnp.int32)
     key_vars = (cached_key, cached_key_scale_var)
     value_vars = (cached_value, cached_value_scale_var)
-    return key_vars, value_vars, cached_segment_id, cache_index
+    return key_vars, value_vars, cached_segment_id, cache_index, cache_lengths
 
   def kv_cache_prefill(
       self,
@@ -652,22 +666,41 @@ class AttentionOp(nn.Module):
       cached_key_vars: tuple[nn.Variable, nn.Variable | None],
       cached_value_vars: tuple[nn.Variable, nn.Variable | None],
       one_hot_indices: Array,
+      cache_lengths: Array,
   ) -> tuple[Array, Array]:
     """Adds a single token's results to the ar kv cache
 
     Args:
-        one_token_key (Array): Key of one token to add to the cache
-        one_token_value (Array): Value of one token to add to the cache
-        cached_ar_key (tuple[nn.Variable, nn.Variable|None],): Cached keys to add new token key to, possibly with scale
-        cached_ar_value (tuple[nn.Variable, nn.Variable|None],: Cached values to add new token value to, possible with scale
-        one_hot_indices (Array): Location of the new token within the cache
+        one_token_key (Array): Key of one token to add to the cache (b,s,n,d)
+        one_token_value (Array): Value of one token to add to the cache (b,s,n,d)
+        cached_ar_key (tuple[nn.Variable, nn.Variable|None],): Cached keys to add new token key to, possibly with scale ((n,b,d), (n,b,d))
+        cached_ar_value (tuple[nn.Variable, nn.Variable|None],: Cached values to add new token value to, possible with scale ((n,b,d), (n,b,d))
+        one_hot_indices (Array): Location of the new token within the cache (1,)
 
     Returns:
         tuple[Array, Array]: Updated caches for key and value with new token info added
     """
-
+    
     cached_key_var, cached_key_scale_var = cached_key_vars
     cached_value_var, cached_value_scale_var = cached_value_vars
+
+    # update_ar_key_value: one_token_key.shape=(4, 1, 32, 128)
+    # update_ar_key_value: one_token_value.shape=(4, 1, 32, 128)
+    # update_ar_key_value: one_hot_indices.shape=(1,)
+    # update_ar_key_value: cache_lengths.shape=(4,)
+    # update_ar_key_value: cached_key_var.value[0].shape=(32, 4, 128)
+    # update_ar_key_value: cached_key_var.value[1].shape=(32, 4, 128)
+    # update_ar_key_value: cached_value_var.value[0].shape=(32, 4, 128)
+    # update_ar_key_value: cached_value_var.value[1].shape=(32, 4, 128)
+
+    print(f"update_ar_key_value: {one_token_key.shape=}")
+    print(f"update_ar_key_value: {one_token_value.shape=}")
+    print(f"update_ar_key_value: {one_hot_indices.shape=}")
+    print(f"update_ar_key_value: {cache_lengths.shape=}")
+    print(f"update_ar_key_value: {cached_key_var.value[0].shape=}")
+    print(f"update_ar_key_value: {cached_key_var.value[1].shape=}")
+    print(f"update_ar_key_value: {cached_value_var.value[0].shape=}")
+    print(f"update_ar_key_value: {cached_value_var.value[1].shape=}")
 
     # In order to update the key, value caches with the current key and
     # value, we move the length axis to the back
@@ -681,13 +714,35 @@ class AttentionOp(nn.Module):
       one_token_key_shaped_for_cache, one_token_key_scale = quantizations.quantize_kv(one_token_key_shaped_for_cache, ar_key_layout.index(CACHE_KV))
       one_token_value_shaped_for_cache, one_token_value_scale = quantizations.quantize_kv(one_token_value_shaped_for_cache, ar_value_layout.index(CACHE_KV))
 
-
-    
+    one_hot_indices = one_hot_indices.astype(int) # (s)
     jax.debug.print("one_hot_indices: {}", one_hot_indices)
-    one_hot_indices = one_hot_indices.astype(int)
+    jax.debug.print("cache_lengths: {}", cache_lengths)
 
+    # TODO(Pate): change to be the location of the length
     ar_key = cached_key_var.value
-    ar_key = jax.lax.dynamic_update_index_in_dim(ar_key, one_token_key_shaped_for_cache, jnp.squeeze(one_hot_indices), ar_key_layout.index(CACHE_SEQUENCE))
+    print(f"update_ar_key_value: {ar_key.shape=}")
+    print(f"update_ar_key_value: {one_token_key_shaped_for_cache.shape=}")
+    print(f"update_ar_key_value: {ar_key_layout.index(CACHE_SEQUENCE)=}")
+    # update_ar_key_value: ar_key.shape=(192, 32, 4, 128)
+    # update_ar_key_value: one_token_key_shaped_for_cache.shape=(1, 32, 4, 128)
+    # update_ar_key_value: ar_key_layout.index(CACHE_SEQUENCE)=0
+   
+    # TODO(Pate): understand what is happenging here. 
+    #   We take the ar_key, (192, 32, 4, 128) (s,n.b,d), which is the array we want to slice into
+    #   We want to take the info in one_token_key_shaped_for_cache (1, 32, 4, 128) (1,n,b,d) and put it into a location inside ar_key
+    #   We put the new info into the one_hot_indices location, which is the current pos and is the same for all entries
+    #   We update the ar_key with the one_token_key_shaped_for_cache values in the axis of the sequence. 
+    # We have an existing Array we want to update of shape (s,n.b,d)
+    # We have another Array of shape (b) that contains locations 0-s
+    # We want to update the existing Array of (s,n,b,d) with b entries of shape (n,d) 
+    # entries = shape()
+    # for i in range(batch_size):
+    #   ar_key[lengths[i], :, i, :] = one_token_key_shaped_for_cache[0,:,i,:]
+    # ar_key = jax.lax.dynamic_update_index_in_dim(ar_key, one_token_key_shaped_for_cache, jnp.squeeze(one_hot_indices), ar_key_layout.index(CACHE_SEQUENCE))
+    ar_key = ar_key.at[cache_lengths[0], :, 0, :].set(one_token_key_shaped_for_cache[0,:,0,:])
+    ar_key = ar_key.at[cache_lengths[1], :, 1, :].set(one_token_key_shaped_for_cache[1,:,1,:])
+    ar_key = ar_key.at[cache_lengths[2], :, 2, :].set(one_token_key_shaped_for_cache[2,:,2,:])
+    ar_key = ar_key.at[cache_lengths[3], :, 3, :].set(one_token_key_shaped_for_cache[3,:,3,:])
     ar_key = nn.with_logical_constraint(
         ar_key,
         ar_key_layout
@@ -695,7 +750,11 @@ class AttentionOp(nn.Module):
     cached_key_var.value = ar_key
 
     ar_value = cached_value_var.value
-    ar_value = jax.lax.dynamic_update_index_in_dim(ar_value, one_token_value_shaped_for_cache, jnp.squeeze(one_hot_indices), ar_key_layout.index(CACHE_SEQUENCE))
+    ar_value = ar_value.at[cache_lengths[0], :, 0, :].set(one_token_value_shaped_for_cache[0,:,0,:])
+    ar_value = ar_value.at[cache_lengths[1], :, 1, :].set(one_token_value_shaped_for_cache[1,:,1,:])
+    ar_value = ar_value.at[cache_lengths[2], :, 2, :].set(one_token_value_shaped_for_cache[2,:,2,:])
+    ar_value = ar_value.at[cache_lengths[3], :, 3, :].set(one_token_value_shaped_for_cache[3,:,3,:])
+    # ar_value = jax.lax.dynamic_update_index_in_dim(ar_value, one_token_value_shaped_for_cache, jnp.squeeze(one_hot_indices), ar_key_layout.index(CACHE_SEQUENCE))
     ar_value = nn.with_logical_constraint(
         ar_value,
         ar_value_layout,
@@ -759,20 +818,31 @@ class AttentionOp(nn.Module):
     if not is_initialized:
       raise ValueError("Error, we can't do autoregression if we haven't seeded the KV Cache.")
 
-    cached_ar_key_var, cached_ar_value_var, cached_ar_segment_id, cache_ar_index = self._get_ar_cache(
+    # TODO(Pate): we need to remove cache_ar_index
+    cached_ar_key_var, cached_ar_value_var, cached_ar_segment_id, cache_ar_index, cache_ar_lengths = self._get_ar_cache(
         batch, heads, kv_head_size, self.quantize_kvcache
     )
 
     key = nn.with_logical_constraint(key, (BATCH, LENGTH, HEAD, D_KV))
     value = nn.with_logical_constraint(value, (BATCH, LENGTH, HEAD, D_KV))
 
-    ar_key, ar_value = self.update_ar_key_value(key, value, cached_ar_key_var, cached_ar_value_var, cache_ar_index.value)
+    ar_key, ar_value = self.update_ar_key_value(key, value, cached_ar_key_var, cached_ar_value_var, cache_ar_index.value, cache_ar_lengths.value)
     active_indicator = jnp.zeros((batch, 1), dtype=jnp.int32) + common_types.DECODING_ACTIVE_SEQUENCE_INDICATOR
     cached_ar_segment_id.value = jax.lax.dynamic_update_index_in_dim(
         cached_ar_segment_id.value, active_indicator, jnp.squeeze(cache_ar_index.value), 1
     )
-    cache_ar_index.value = jnp.mod(cache_ar_index.value + 1, self.max_target_length - self.max_prefill_predict_length)
-    jax.debug.print("cache_ar_index.value: {}", cache_ar_index.value)
+    cache_ar_lengths.value = cache_ar_lengths.value.at[0].add(1)
+    cache_ar_lengths.value = cache_ar_lengths.value.at[1].add(1)
+    cache_ar_lengths.value = cache_ar_lengths.value.at[2].add(1)
+    cache_ar_lengths.value = cache_ar_lengths.value.at[3].add(1)
+    # x = x.at[idx].add(y)
+    # cache_ar_lengths[1].value = cache_ar_lengths[1].value + 1
+    # cache_ar_lengths[2].value = cache_ar_lengths[2].value + 1
+    # cache_ar_lengths[3].value = cache_ar_lengths[3].value + 1
+    # cache_ar_index.value = jnp.mod(cache_ar_index.value + 1, self.max_target_length - self.max_prefill_predict_length)
+
+    jax.debug.print("In kv_cache_ar: cache_ar_index.value: {}", cache_ar_index.value)
+    jax.debug.print("kv_cache_ar: cache_ar_lengths.value: {}", cache_ar_lengths.value)
     # jax.debug.print("cache_ar_index: {}", cache_ar_index)
 
     # Prep and return both prefill and ar caches
@@ -785,7 +855,7 @@ class AttentionOp(nn.Module):
         self.prefill_cache_var_model_var(cached_prefill_value_var, value.dtype, self.prefill_value_axis_order),
         cached_prefill_segment_id.value,
     )
-    return cached_prefill, (ar_key, ar_value, cached_ar_segment_id.value)
+    return cached_prefill, (ar_key, ar_value, cached_ar_segment_id.value, cache_ar_lengths.value)
 
   def kv_cache(self, key: Array, value: Array, decoder_segment_ids: Array, model_mode: str) -> tuple:
     """KV cache takes the current state and updates the state accordingly.
@@ -849,6 +919,7 @@ class AttentionOp(nn.Module):
         key=prefill_kv_cache[0],
         value=prefill_kv_cache[1],
         decoder_segment_ids=prefill_kv_cache[2],
+        lengths=None,
         model_mode=model_mode,
         use_ragged=False,
     )
@@ -864,10 +935,14 @@ class AttentionOp(nn.Module):
         key=ar_kv_cache[0],
         value=ar_kv_cache[1],
         decoder_segment_ids=ar_kv_cache[2],
+        lengths=ar_kv_cache[3],
         model_mode=model_mode,
         use_ragged=True,
     )
     if ar_output is not None:
+      print(f"{ar_output.shape=}")
+      print(f"{ar_exponentials_max.shape=}")
+      print(f"{ar_exponentials_sum.shape=}")
       unnormalized_outputs = [prefill_unnormalized_output, ar_output]
       exponentials_maxes = [prefill_exponentials_max, ar_exponentials_max]
       exponentials_sums = [prefill_exponentials_sum, ar_exponentials_sum]
