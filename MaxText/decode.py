@@ -32,31 +32,34 @@ def main(config):
   metadata = engine.get_tokenizer()
   vocab = token_utils.load_vocab(metadata.path, metadata.extra_ids)
   tokenizer = vocab.tokenizer
-  tokens, true_length = token_utils.tokenize_and_pad(
-      text, vocab, is_bos=True, prefill_lengths=[config.max_prefill_predict_length]
-  )
-  assert tokens.size <= config.max_prefill_predict_length, "can't take too many tokens"
-  assert config.quantization != "fp8", "fp8 on NVIDIA GPUs is not supported in decode.py yet"
-  prefill_result = engine.prefill(params=params, padded_tokens=tokens, true_length=true_length)
-  slot = 0
-
   decode_state = engine.init_decode_state()
-  decode_state = engine.insert(prefill_result, decode_state, slot=slot)
+  for i in range(1):
+    print(f"\nIter {i}")
+    tokens, true_length = token_utils.tokenize_and_pad(
+        text, vocab, is_bos=True, prefill_lengths=[config.max_prefill_predict_length]
+    )
+    assert tokens.size <= config.max_prefill_predict_length, "can't take too many tokens"
+    assert config.quantization != "fp8", "fp8 on NVIDIA GPUs is not supported in decode.py yet"
+    prefill_result = engine.prefill(params=params, padded_tokens=tokens, true_length=true_length)
+    slot = i % 4
 
-  steps = range(config.max_prefill_predict_length, config.max_target_length)
-  sampled_tokens_list = []
-  for _ in steps:
-    decode_state, sampled_tokens = engine.generate(params, decode_state)
-    sampled_tokens_list.append(sampled_tokens)
+    decode_state = engine.insert(prefill_result, decode_state, slot=slot)
 
-  results = [sampled_tokens.get_result_at_slot(slot).tokens.item() for sampled_tokens in sampled_tokens_list]
-  output = tokenizer.detokenize(results)
-  print(f"Input `{text}` -> `{output}`")
+    steps = range(config.max_prefill_predict_length, config.max_target_length)
+    # steps = range(config.max_prefill_predict_length, config.max_prefill_predict_length + 12)
+    sampled_tokens_list = []
+    for _ in steps:
+      decode_state, sampled_tokens = engine.generate(params, decode_state)
+      sampled_tokens_list.append(sampled_tokens)
 
-  if config.autoregressive_decode_assert != "":
-    assert (
-        output == config.autoregressive_decode_assert
-    ), f"generated text mismatch {output=} {config.autoregressive_decode_assert=}"
+    results = [sampled_tokens.get_result_at_slot(slot).tokens.item() for sampled_tokens in sampled_tokens_list]
+    output = tokenizer.detokenize(results)
+    print(f"Input `{text}` -> `{output}`")
+
+    if config.autoregressive_decode_assert != "":
+      assert (
+          output == config.autoregressive_decode_assert
+      ), f"generated text mismatch {output=} {config.autoregressive_decode_assert=}"
 
 
 def validate_config(config):
