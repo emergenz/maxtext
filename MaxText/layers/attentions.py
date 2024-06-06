@@ -168,7 +168,7 @@ class AttentionOp(nn.Module):
 
     return jnp.where(output_mask, 0.0, DEFAULT_MASK_VALUE) if output_mask is not None else None
 
-  def apply_attention(self, query: Array, key: Array, value: Array, decoder_segment_ids: Array | None, model_mode: str, use_ragged: str = False):
+  def apply_attention(self, query: Array, key: Array, value: Array, decoder_segment_ids: Array | None, lengths: Array | None, model_mode: str, use_ragged: str = False):
     self.check_attention_inputs(query, key, value)
     length = query.shape[-3]
     if (
@@ -176,7 +176,8 @@ class AttentionOp(nn.Module):
       and model_mode == common_types.MODEL_MODE_AUTOREGRESSIVE 
       and decoder_segment_ids is not None
     ):
-      return self.ragged_attention(query, key, value, decoder_segment_ids)
+    # if False:
+      return self.ragged_attention(query, key, value, lengths)
     elif (
         self.attention_kernel == "dot_product"
         or (self.attention_kernel == "autoselected" and model_mode == common_types.MODEL_MODE_AUTOREGRESSIVE)
@@ -207,7 +208,7 @@ class AttentionOp(nn.Module):
       o, m, l  = vmap_mqa_ref(query, key, value, lengths)
       return o, m, l
   
-  def ragged_attention(self, query: Array, key: Array, value: Array, decoder_segment_ids: Array) -> tuple[Array, Array, Array]:
+  def ragged_attention(self, query: Array, key: Array, value: Array, lengths: Array) -> tuple[Array, Array, Array]:
     """Ragged Attention."""
 
     ragged_qkv = nn.logical_to_mesh_axes(self.ragged_qkv_axis_names)
@@ -225,9 +226,7 @@ class AttentionOp(nn.Module):
         out_specs=ragged_output,
         check_rep=False,
     )
-    def wrap_ragged_attention(query, key, value, decoder_segment_ids):
-      lengths = decoder_segment_ids.sum(axis=1)
-
+    def wrap_ragged_attention(query, key, value, lengths):
       vmap_ragged_mqa = jax.vmap(ragged_mqa, in_axes=[1, 1, 1, None], out_axes=2)
       o, m, l  = vmap_ragged_mqa(query, key, value, lengths)
       m = jnp.expand_dims(m, axis=-1)
@@ -238,7 +237,7 @@ class AttentionOp(nn.Module):
     query = jnp.swapaxes(query, 1, 2)
     key = jnp.swapaxes(key, 1, 2)
     value = jnp.swapaxes(value, 1, 2)
-    return wrap_ragged_attention(query, key, value, decoder_segment_ids)
+    return wrap_ragged_attention(query, key, value, lengths)
 
   def tpu_flash_attention(self, query: Array, key: Array, value: Array, decoder_segment_ids: Array | None) -> Array:
     """TPU Flash Attention."""
@@ -558,6 +557,14 @@ class AttentionOp(nn.Module):
         value_layout,
     )
 
+    cache_lengths = self.variable(
+        "cache",
+        "cache_ar_lengths",
+        nn.with_logical_partitioning(jnp.zeros, (CACHE_BATCH, )),
+        (cache_logical_shape[0], ),
+        jnp.int32,
+    )
+
     cached_segment_id = self.variable(
         "cache",
         "cache_ar_segment_id",
@@ -593,7 +600,7 @@ class AttentionOp(nn.Module):
     cache_index = self.variable("cache", "cache_ar_index", nn.with_logical_partitioning(jnp.zeros, ()), (1,), jnp.int32)
     key_vars = (cached_key, cached_key_scale_var)
     value_vars = (cached_value, cached_value_scale_var)
-    return key_vars, value_vars, cached_segment_id, cache_index
+    return key_vars, value_vars, cached_segment_id, cache_index, cache_lengths
 
   def kv_cache_prefill(
       self,
@@ -648,6 +655,7 @@ class AttentionOp(nn.Module):
       cached_key_vars: tuple[nn.Variable, nn.Variable | None],
       cached_value_vars: tuple[nn.Variable, nn.Variable | None],
       one_hot_indices: Array,
+      lengths: Array,
   ) -> tuple[Array, Array]:
     """Adds a single token's results to the ar kv cache
 
@@ -752,19 +760,24 @@ class AttentionOp(nn.Module):
     if not is_initialized:
       raise ValueError("Error, we can't do autoregression if we haven't seeded the KV Cache.")
 
-    cached_ar_key_var, cached_ar_value_var, cached_ar_segment_id, cache_ar_index = self._get_ar_cache(
+    cached_ar_key_var, cached_ar_value_var, cached_ar_segment_id, cache_ar_index, cache_ar_lengths = self._get_ar_cache(
         batch, heads, kv_head_size, self.quantize_kvcache
     )
 
     key = nn.with_logical_constraint(key, (BATCH, LENGTH, HEAD, D_KV))
     value = nn.with_logical_constraint(value, (BATCH, LENGTH, HEAD, D_KV))
 
-    ar_key, ar_value = self.update_ar_key_value(key, value, cached_ar_key_var, cached_ar_value_var, cache_ar_index.value)
+    ar_key, ar_value = self.update_ar_key_value(key, value, cached_ar_key_var, cached_ar_value_var, cache_ar_index.value, cache_ar_lengths.value)
     active_indicator = jnp.zeros((batch, 1), dtype=jnp.int32) + common_types.DECODING_ACTIVE_SEQUENCE_INDICATOR
     cached_ar_segment_id.value = jax.lax.dynamic_update_index_in_dim(
         cached_ar_segment_id.value, active_indicator, jnp.squeeze(cache_ar_index.value), 1
     )
     cache_ar_index.value = jnp.mod(cache_ar_index.value + 1, self.max_target_length - self.max_prefill_predict_length)
+
+    cache_ar_lengths.value = cache_ar_lengths.value.at[0].add(1)
+    cache_ar_lengths.value = cache_ar_lengths.value.at[1].add(1)
+    cache_ar_lengths.value = cache_ar_lengths.value.at[2].add(1)
+    cache_ar_lengths.value = cache_ar_lengths.value.at[3].add(1)
 
     # Prep and return both prefill and ar caches
     cached_prefill_key_var, cached_prefill_value_var, cached_prefill_segment_id = self._get_prefill_cache(
@@ -776,7 +789,7 @@ class AttentionOp(nn.Module):
         self.prefill_cache_var_model_var(cached_prefill_value_var, value.dtype, self.prefill_value_axis_order),
         cached_prefill_segment_id.value,
     )
-    return cached_prefill, (ar_key, ar_value, cached_ar_segment_id.value)
+    return cached_prefill, (ar_key, ar_value, cached_ar_segment_id.value, cache_ar_lengths.value)
 
   def kv_cache(self, key: Array, value: Array, decoder_segment_ids: Array, model_mode: str) -> tuple:
     """KV cache takes the current state and updates the state accordingly.
@@ -840,6 +853,7 @@ class AttentionOp(nn.Module):
         key=prefill_kv_cache[0],
         value=prefill_kv_cache[1],
         decoder_segment_ids=prefill_kv_cache[2],
+        lengths=None,
         model_mode=model_mode,
         use_ragged=False,
     )
@@ -855,6 +869,7 @@ class AttentionOp(nn.Module):
         key=ar_kv_cache[0],
         value=ar_kv_cache[1],
         decoder_segment_ids=ar_kv_cache[2],
+        lengths=ar_kv_cache[3],
         model_mode=model_mode,
         use_ragged=True,
     )

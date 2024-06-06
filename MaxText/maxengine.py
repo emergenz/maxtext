@@ -270,6 +270,8 @@ class MaxEngine(engine_api.Engine):
         ## copy prefill cachce
         full_cache = jax.lax.dynamic_update_index_in_dim(full_cache, partial_cache, slot, batch_idx)
         return full_cache
+      elif path_key == "cache_ar_lengths":
+        return jax.lax.dynamic_update_index_in_dim(full_cache, 0, slot, 0)
       elif path_key in [
           "cached_prefill_key",
           "cached_prefill_value",
