@@ -286,8 +286,8 @@ class MaxEngine(engine_api.Engine):
       
       path_key = path[-1].key
       print(f"\n\n{path_key=}")
-      if path_key == "cache_ar_index":
-        jax.debug.print("cache_ar_index: {}", full_cache)
+      # if path_key == "cache_ar_index":
+      #   jax.debug.print("cache_ar_index: {}", full_cache)
       if path_key in ["cache_ar_index", "cached_ar_key_scale", "cached_ar_value_scale"]:
         return full_cache  # we don't even zero these out because we can mask them out.
 
@@ -297,6 +297,7 @@ class MaxEngine(engine_api.Engine):
 
       print(f"{batch_idx=}")
       if path_key == "cache_ar_lengths": 
+        full_cache = jax.lax.dynamic_update_index_in_dim(full_cache, 0, slot, 0)
         jax.debug.print("cache_ar_lengths: {}", full_cache)
         return jax.lax.dynamic_update_index_in_dim(full_cache, 0, slot, 0)
       elif path_key == "cached_ar_key": # cached_ar_key - partial_cache.shape=(1024, 32, 1, 128)
@@ -328,7 +329,6 @@ class MaxEngine(engine_api.Engine):
         full_cache = jax.lax.dynamic_update_index_in_dim(full_cache, zeros, slot, batch_idx)
         ## copy prefill cache
         full_cache = jax.lax.dynamic_update_index_in_dim(full_cache, partial_cache, slot, batch_idx)
-        print(f"cache_prefill_segment_id - {zeros.shape=}")
         return full_cache
       elif path_key in [
           "cached_prefill_key",
