@@ -33,7 +33,7 @@ def main(config):
   vocab = token_utils.load_vocab(metadata.path, metadata.extra_ids)
   tokenizer = vocab.tokenizer
   decode_state = engine.init_decode_state()
-  for i in range(12):
+  for i in range(1):
     print(f"\nIter {i}")
     tokens, true_length = token_utils.tokenize_and_pad(
         text, vocab, is_bos=True, prefill_lengths=[config.max_prefill_predict_length]
@@ -45,7 +45,7 @@ def main(config):
 
     decode_state = engine.insert(prefill_result, decode_state, slot=slot)
 
-    steps = range(config.max_prefill_predict_length, config.max_prefill_predict_length + 12)
+    steps = range(config.max_prefill_predict_length, config.max_target_length - config.max_prefill_predict_length)
     sampled_tokens_list = []
     for _ in steps:
       decode_state, sampled_tokens = engine.generate(params, decode_state)

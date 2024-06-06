@@ -606,10 +606,10 @@ class AttentionOp(nn.Module):
     else:
       cached_key_scale_var = None
       cached_value_scale_var = None
-    cache_index = self.variable("cache", "cache_ar_index", nn.with_logical_partitioning(jnp.zeros, ()), (1,), jnp.int32)
+    # cache_index = self.variable("cache", "cache_ar_index", nn.with_logical_partitioning(jnp.zeros, ()), (1,), jnp.int32)
     key_vars = (cached_key, cached_key_scale_var)
     value_vars = (cached_value, cached_value_scale_var)
-    return key_vars, value_vars, cache_index, cache_lengths
+    return key_vars, value_vars, cache_lengths
 
   def kv_cache_prefill(
       self,
@@ -663,7 +663,6 @@ class AttentionOp(nn.Module):
       one_token_value: Array,
       cached_key_vars: tuple[nn.Variable, nn.Variable | None],
       cached_value_vars: tuple[nn.Variable, nn.Variable | None],
-      one_hot_indices: Array,
       cache_lengths: Array,
   ) -> tuple[Array, Array]:
     """Adds a single token's results to the ar kv cache
@@ -691,14 +690,14 @@ class AttentionOp(nn.Module):
     # update_ar_key_value: cached_value_var.value[0].shape=(32, 4, 128)
     # update_ar_key_value: cached_value_var.value[1].shape=(32, 4, 128)
 
-    # print(f"update_ar_key_value: {one_token_key.shape=}")
-    # print(f"update_ar_key_value: {one_token_value.shape=}")
+    print(f"update_ar_key_value: {one_token_key.shape=}")
+    print(f"update_ar_key_value: {one_token_value.shape=}")
     # print(f"update_ar_key_value: {one_hot_indices.shape=}")
-    # print(f"update_ar_key_value: {cache_lengths.shape=}")
-    # print(f"update_ar_key_value: {cached_key_var.value[0].shape=}")
-    # print(f"update_ar_key_value: {cached_key_var.value[1].shape=}")
-    # print(f"update_ar_key_value: {cached_value_var.value[0].shape=}")
-    # print(f"update_ar_key_value: {cached_value_var.value[1].shape=}")
+    print(f"update_ar_key_value: {cache_lengths.shape=}")
+    print(f"update_ar_key_value: {cached_key_var.value[0].shape=}")
+    print(f"update_ar_key_value: {cached_key_var.value[1].shape=}")
+    print(f"update_ar_key_value: {cached_value_var.value[0].shape=}")
+    print(f"update_ar_key_value: {cached_value_var.value[1].shape=}")
 
     # In order to update the key, value caches with the current key and
     # value, we move the length axis to the back
@@ -712,20 +711,20 @@ class AttentionOp(nn.Module):
       one_token_key_shaped_for_cache, one_token_key_scale = quantizations.quantize_kv(one_token_key_shaped_for_cache, ar_key_layout.index(CACHE_KV))
       one_token_value_shaped_for_cache, one_token_value_scale = quantizations.quantize_kv(one_token_value_shaped_for_cache, ar_value_layout.index(CACHE_KV))
 
-    one_hot_indices = one_hot_indices.astype(int) # (s)
+    # one_hot_indices = one_hot_indices.astype(int) # (s)
     # jax.debug.print("one_hot_indices: {}", one_hot_indices)
     # jax.debug.print("cache_lengths: {}", cache_lengths)
 
     # TODO(Pate): change to be the location of the length
     ar_key = cached_key_var.value
-    # print(f"update_ar_key_value: {ar_key.shape=}")
-    # print(f"update_ar_key_value: {one_token_key_shaped_for_cache.shape=}")
-    # print(f"update_ar_key_value: {ar_key_layout.index(CACHE_SEQUENCE)=}")
+    print(f"update_ar_key_value: {ar_key.shape=}")
+    print(f"update_ar_key_value: {one_token_key_shaped_for_cache.shape=}")
+    print(f"update_ar_key_value: {ar_key_layout.index(CACHE_SEQUENCE)=}")
     # update_ar_key_value: ar_key.shape=(192, 32, 4, 128)
     # update_ar_key_value: one_token_key_shaped_for_cache.shape=(1, 32, 4, 128)
     # update_ar_key_value: ar_key_layout.index(CACHE_SEQUENCE)=0
    
-    # TODO(Pate): understand what is happenging here. 
+    # TODO(Pate): understand what is happening here. 
     #   We take the ar_key, (192, 32, 4, 128) (s,n.b,d), which is the array we want to slice into
     #   We want to take the info in one_token_key_shaped_for_cache (1, 32, 4, 128) (1,n,b,d) and put it into a location inside ar_key
     #   We put the new info into the one_hot_indices location, which is the current pos and is the same for all entries
@@ -737,48 +736,60 @@ class AttentionOp(nn.Module):
     # for i in range(batch_size):
     #   ar_key[lengths[i], :, i, :] = one_token_key_shaped_for_cache[0,:,i,:]
     # ar_key = jax.lax.dynamic_update_index_in_dim(ar_key, one_token_key_shaped_for_cache, jnp.squeeze(one_hot_indices), ar_key_layout.index(CACHE_SEQUENCE))
-    ar_key = ar_key.at[cache_lengths[0], :, 0, :].set(one_token_key_shaped_for_cache[0,:,0,:])
-    ar_key = ar_key.at[cache_lengths[1], :, 1, :].set(one_token_key_shaped_for_cache[1,:,1,:])
-    ar_key = ar_key.at[cache_lengths[2], :, 2, :].set(one_token_key_shaped_for_cache[2,:,2,:])
-    ar_key = ar_key.at[cache_lengths[3], :, 3, :].set(one_token_key_shaped_for_cache[3,:,3,:])
+    ar_key = ar_key.at[cache_lengths[0]-1, :, 0, :].set(one_token_key_shaped_for_cache[0,:,0,:])
+    # ar_key = ar_key.at[cache_lengths[1]-1, :, 1, :].set(one_token_key_shaped_for_cache[:,:,1,:])
+    # ar_key = ar_key.at[cache_lengths[2]-1, :, 2, :].set(one_token_key_shaped_for_cache[:,:,2,:])
+    # ar_key = ar_key.at[cache_lengths[3]-1, :, 3, :].set(one_token_key_shaped_for_cache[:,:,3,:])
     ar_key = nn.with_logical_constraint(
         ar_key,
         ar_key_layout
     )
     cached_key_var.value = ar_key
+    # update_ar_key_value: one_token_key_shaped_for_cache.shape=(1, 32, 4, 128)
+    # update_ar_key_value: one_token_key_shaped_for_cache[0,:,0,:].shape=(32, 128)
+    # update_ar_key_value: ar_key.shape=(192, 32, 4, 128)
+    print(f"update_ar_key_value: {one_token_key_shaped_for_cache.shape=}")
+    print(f"update_ar_key_value: {one_token_key_shaped_for_cache[:,:,0,:].shape=}")
+    print(f"update_ar_key_value: {ar_key.shape=}")
 
     ar_value = cached_value_var.value
-    ar_value = ar_value.at[cache_lengths[0], :, 0, :].set(one_token_value_shaped_for_cache[0,:,0,:])
-    ar_value = ar_value.at[cache_lengths[1], :, 1, :].set(one_token_value_shaped_for_cache[1,:,1,:])
-    ar_value = ar_value.at[cache_lengths[2], :, 2, :].set(one_token_value_shaped_for_cache[2,:,2,:])
-    ar_value = ar_value.at[cache_lengths[3], :, 3, :].set(one_token_value_shaped_for_cache[3,:,3,:])
+    ar_value = ar_value.at[cache_lengths[0]-1, :, 0, :].set(one_token_value_shaped_for_cache[0,:,0,:])
+    # ar_value = ar_value.at[cache_lengths[1]-1, :, 1, :].set(one_token_value_shaped_for_cache[:,:,1,:])
+    # ar_value = ar_value.at[cache_lengths[2]-1, :, 2, :].set(one_token_value_shaped_for_cache[:,:,2,:])
+    # ar_value = ar_value.at[cache_lengths[3]-1, :, 3, :].set(one_token_value_shaped_for_cache[:,:,3,:])
     # ar_value = jax.lax.dynamic_update_index_in_dim(ar_value, one_token_value_shaped_for_cache, jnp.squeeze(one_hot_indices), ar_key_layout.index(CACHE_SEQUENCE))
     ar_value = nn.with_logical_constraint(
         ar_value,
         ar_value_layout,
     )
     cached_value_var.value = ar_value
+    # update_ar_key_value: one_token_value_shaped_for_cache.shape=(1, 32, 4, 128)
+    # update_ar_key_value: one_token_value_shaped_for_cache[0,:,0,:].shape=(32, 128)
+    # update_ar_key_value: ar_value.shape=(192, 32, 4, 128)
+    print(f"update_ar_key_value: {one_token_value_shaped_for_cache[0,:,0,:].shape=}")
+    print(f"update_ar_key_value: {one_token_value_shaped_for_cache.shape=}")
+    print(f"update_ar_key_value: {ar_value.shape=}")
 
-    if self.quantize_kvcache:
-      ar_key_scale = jax.lax.dynamic_update_index_in_dim(
-          cached_key_scale_var.value, one_token_key_scale, jnp.squeeze(one_hot_indices), ar_key_layout.index(CACHE_SEQUENCE)
-      )
-      ar_key_scale = nn.with_logical_constraint(
-          ar_key_scale,
-          ar_key_layout
-      )
-      ar_value_scale = jax.lax.dynamic_update_index_in_dim(
-          cached_value_scale_var.value, one_token_value_scale, jnp.squeeze(one_hot_indices), ar_key_layout.index(CACHE_SEQUENCE)
-      )
-      ar_value_scale = nn.with_logical_constraint(
-          ar_value_scale,
-          ar_value_layout
-      )
-      cached_key_scale_var.value = ar_key_scale
-      cached_value_scale_var.value = ar_value_scale
+    # if self.quantize_kvcache:
+    #   ar_key_scale = jax.lax.dynamic_update_index_in_dim(
+    #       cached_key_scale_var.value, one_token_key_scale, jnp.squeeze(one_hot_indices), ar_key_layout.index(CACHE_SEQUENCE)
+    #   )
+    #   ar_key_scale = nn.with_logical_constraint(
+    #       ar_key_scale,
+    #       ar_key_layout
+    #   )
+    #   ar_value_scale = jax.lax.dynamic_update_index_in_dim(
+    #       cached_value_scale_var.value, one_token_value_scale, jnp.squeeze(one_hot_indices), ar_key_layout.index(CACHE_SEQUENCE)
+    #   )
+    #   ar_value_scale = nn.with_logical_constraint(
+    #       ar_value_scale,
+    #       ar_value_layout
+    #   )
+    #   cached_key_scale_var.value = ar_key_scale
+    #   cached_value_scale_var.value = ar_value_scale
 
-      ar_key = quantizations.unquantize_kv(cached_key_var.value, cached_key_scale_var.value, one_token_key.dtype)
-      ar_value = quantizations.unquantize_kv(cached_value_var.value, cached_value_scale_var.value, one_token_value.dtype)
+    #   ar_key = quantizations.unquantize_kv(cached_key_var.value, cached_key_scale_var.value, one_token_key.dtype)
+    #   ar_value = quantizations.unquantize_kv(cached_value_var.value, cached_value_scale_var.value, one_token_value.dtype)
 
     # Move the keys and values back to their original shapes.
     return self.revert_kvlen_axis(ar_key, self.ar_key_axis_order), self.revert_kvlen_axis(ar_value, self.ar_value_axis_order)
@@ -812,19 +823,19 @@ class AttentionOp(nn.Module):
     batch, sequence, heads, kv_head_size = key.shape
     if sequence != 1:
       raise ValueError(f"Sequence length should be 1 during autoregression, got {sequence=}")
-    is_initialized = self.has_variable("cache", "cache_ar_index")
-    if not is_initialized:
-      raise ValueError("Error, we can't do autoregression if we haven't seeded the KV Cache.")
+    # is_initialized = self.has_variable("cache", "cache_ar_index")
+    # if not is_initialized:
+    #   raise ValueError("Error, we can't do autoregression if we haven't seeded the KV Cache.")
 
     # TODO(Pate): we need to remove cache_ar_index
-    cached_ar_key_var, cached_ar_value_var, cache_ar_index, cache_ar_lengths = self._get_ar_cache(
+    cached_ar_key_var, cached_ar_value_var, cache_ar_lengths = self._get_ar_cache(
         batch, heads, kv_head_size, self.quantize_kvcache
     )
 
     key = nn.with_logical_constraint(key, (BATCH, LENGTH, HEAD, D_KV))
     value = nn.with_logical_constraint(value, (BATCH, LENGTH, HEAD, D_KV))
 
-    ar_key, ar_value = self.update_ar_key_value(key, value, cached_ar_key_var, cached_ar_value_var, cache_ar_index.value, cache_ar_lengths.value)
+    ar_key, ar_value = self.update_ar_key_value(key, value, cached_ar_key_var, cached_ar_value_var, cache_ar_lengths.value)
     active_indicator = jnp.zeros((batch, 1), dtype=jnp.int32) + common_types.DECODING_ACTIVE_SEQUENCE_INDICATOR
     # cached_ar_segment_id.value = jax.lax.dynamic_update_index_in_dim(
     #     cached_ar_segment_id.value, active_indicator, jnp.squeeze(cache_ar_index.value), 1
