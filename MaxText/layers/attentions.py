@@ -656,6 +656,7 @@ class AttentionOp(nn.Module):
       cached_value_vars: tuple[nn.Variable, nn.Variable | None],
       one_hot_indices: Array,
       lengths: Array,
+      use_ragged: bool,
   ) -> tuple[Array, Array]:
     """Adds a single token's results to the ar kv cache
 
@@ -732,14 +733,16 @@ class AttentionOp(nn.Module):
     # axis (int) – the axis of the update.
     # ar_key = jax.lax.dynamic_update_index_in_dim(ar_key, one_token_key_shaped_for_cache, jnp.squeeze(one_hot_indices), ar_key_layout.index(CACHE_SEQUENCE))
     ar_key = cached_key_var.value
-    ar_key = ar_key.at[lengths[0], :, 0, :].set(one_token_key_shaped_for_cache[0, :, 0, :])
-    ar_key = ar_key.at[lengths[1], :, 1, :].set(one_token_key_shaped_for_cache[0, :, 1, :])
-    ar_key = ar_key.at[lengths[2], :, 2, :].set(one_token_key_shaped_for_cache[0, :, 2, :])
-    ar_key = ar_key.at[lengths[3], :, 3, :].set(one_token_key_shaped_for_cache[0, :, 3, :])
-    # ar_key = ar_key.at[jnp.squeeze(one_hot_indices), :, 0, :].set(one_token_key_shaped_for_cache[0, :, 0, :])
-    # ar_key = ar_key.at[jnp.squeeze(one_hot_indices), :, 1, :].set(one_token_key_shaped_for_cache[0, :, 1, :])
-    # ar_key = ar_key.at[jnp.squeeze(one_hot_indices), :, 2, :].set(one_token_key_shaped_for_cache[0, :, 2, :])
-    # ar_key = ar_key.at[jnp.squeeze(one_hot_indices), :, 3, :].set(one_token_key_shaped_for_cache[0, :, 3, :])
+    if use_ragged:
+      ar_key = ar_key.at[lengths[0], :, 0, :].set(one_token_key_shaped_for_cache[0, :, 0, :])
+      ar_key = ar_key.at[lengths[1], :, 1, :].set(one_token_key_shaped_for_cache[0, :, 1, :])
+      ar_key = ar_key.at[lengths[2], :, 2, :].set(one_token_key_shaped_for_cache[0, :, 2, :])
+      ar_key = ar_key.at[lengths[3], :, 3, :].set(one_token_key_shaped_for_cache[0, :, 3, :])
+    else:
+      ar_key = ar_key.at[jnp.squeeze(one_hot_indices), :, 0, :].set(one_token_key_shaped_for_cache[0, :, 0, :])
+      ar_key = ar_key.at[jnp.squeeze(one_hot_indices), :, 1, :].set(one_token_key_shaped_for_cache[0, :, 1, :])
+      ar_key = ar_key.at[jnp.squeeze(one_hot_indices), :, 2, :].set(one_token_key_shaped_for_cache[0, :, 2, :])
+      ar_key = ar_key.at[jnp.squeeze(one_hot_indices), :, 3, :].set(one_token_key_shaped_for_cache[0, :, 3, :])
     ar_key = nn.with_logical_constraint(
         ar_key,
         ar_key_layout
@@ -751,14 +754,16 @@ class AttentionOp(nn.Module):
 
     ar_value = cached_value_var.value
     # ar_value = jax.lax.dynamic_update_index_in_dim(ar_value, one_token_value_shaped_for_cache, jnp.squeeze(one_hot_indices), ar_key_layout.index(CACHE_SEQUENCE))
-    ar_value = ar_value.at[lengths[0], :, 0, :].set(one_token_value_shaped_for_cache[0, :, 0, :])
-    ar_value = ar_value.at[lengths[1], :, 1, :].set(one_token_value_shaped_for_cache[0, :, 1, :])
-    ar_value = ar_value.at[lengths[2], :, 2, :].set(one_token_value_shaped_for_cache[0, :, 2, :])
-    ar_value = ar_value.at[lengths[3], :, 3, :].set(one_token_value_shaped_for_cache[0, :, 3, :])
-    # ar_value = ar_value.at[jnp.squeeze(one_hot_indices), :, 0, :].set(one_token_value_shaped_for_cache[0, :, 0, :])
-    # ar_value = ar_value.at[jnp.squeeze(one_hot_indices), :, 1, :].set(one_token_value_shaped_for_cache[0, :, 1, :])
-    # ar_value = ar_value.at[jnp.squeeze(one_hot_indices), :, 2, :].set(one_token_value_shaped_for_cache[0, :, 2, :])
-    # ar_value = ar_value.at[jnp.squeeze(one_hot_indices), :, 3, :].set(one_token_value_shaped_for_cache[0, :, 3, :])
+    if use_ragged:
+      ar_value = ar_value.at[lengths[0], :, 0, :].set(one_token_value_shaped_for_cache[0, :, 0, :])
+      ar_value = ar_value.at[lengths[1], :, 1, :].set(one_token_value_shaped_for_cache[0, :, 1, :])
+      ar_value = ar_value.at[lengths[2], :, 2, :].set(one_token_value_shaped_for_cache[0, :, 2, :])
+      ar_value = ar_value.at[lengths[3], :, 3, :].set(one_token_value_shaped_for_cache[0, :, 3, :])
+    else:
+      ar_value = ar_value.at[jnp.squeeze(one_hot_indices), :, 0, :].set(one_token_value_shaped_for_cache[0, :, 0, :])
+      ar_value = ar_value.at[jnp.squeeze(one_hot_indices), :, 1, :].set(one_token_value_shaped_for_cache[0, :, 1, :])
+      ar_value = ar_value.at[jnp.squeeze(one_hot_indices), :, 2, :].set(one_token_value_shaped_for_cache[0, :, 2, :])
+      ar_value = ar_value.at[jnp.squeeze(one_hot_indices), :, 3, :].set(one_token_value_shaped_for_cache[0, :, 3, :])
     ar_value = nn.with_logical_constraint(
         ar_value,
         ar_value_layout,
@@ -803,6 +808,7 @@ class AttentionOp(nn.Module):
       self,
       key: Array,
       value: Array,
+      use_ragged: bool,
   ):
     """In autoregressive mode, we update the cache for this entry and
        then return the full cache.
@@ -831,7 +837,7 @@ class AttentionOp(nn.Module):
     key = nn.with_logical_constraint(key, (BATCH, LENGTH, HEAD, D_KV))
     value = nn.with_logical_constraint(value, (BATCH, LENGTH, HEAD, D_KV))
 
-    ar_key, ar_value = self.update_ar_key_value(key, value, cached_ar_key_var, cached_ar_value_var, cache_ar_index.value, cache_ar_lengths.value)
+    ar_key, ar_value = self.update_ar_key_value(key, value, cached_ar_key_var, cached_ar_value_var, cache_ar_index.value, cache_ar_lengths.value, use_ragged)
     active_indicator = jnp.zeros((batch, 1), dtype=jnp.int32) + common_types.DECODING_ACTIVE_SEQUENCE_INDICATOR
     cached_ar_segment_id.value = jax.lax.dynamic_update_index_in_dim(
         cached_ar_segment_id.value, active_indicator, jnp.squeeze(cache_ar_index.value), 1
@@ -855,7 +861,7 @@ class AttentionOp(nn.Module):
     )
     return cached_prefill, (ar_key, ar_value, cached_ar_segment_id.value, cache_ar_lengths.value)
 
-  def kv_cache(self, key: Array, value: Array, decoder_segment_ids: Array, model_mode: str) -> tuple:
+  def kv_cache(self, key: Array, value: Array, decoder_segment_ids: Array, model_mode: str, use_ragged: bool) -> tuple:
     """KV cache takes the current state and updates the state accordingly.
 
     The key and value have dimension [batch, length, num_heads, head_dim],
@@ -881,7 +887,7 @@ class AttentionOp(nn.Module):
     elif model_mode == common_types.MODEL_MODE_PREFILL:
       return self.kv_cache_prefill(key, value, decoder_segment_ids), None
     elif model_mode == common_types.MODEL_MODE_AUTOREGRESSIVE:
-      return self.kv_cache_autoregressive(key, value)
+      return self.kv_cache_autoregressive(key, value, use_ragged)
     else:
       raise ValueError(f"Model Mode isn't supported! {model_mode=}")
 
@@ -910,7 +916,8 @@ class AttentionOp(nn.Module):
 
   @nn.compact
   def __call__(self, query, key, value, decoder_segment_ids, model_mode):
-    prefill_kv_cache, ar_kv_cache = self.kv_cache(key, value, decoder_segment_ids, model_mode)
+    use_ragged = True 
+    prefill_kv_cache, ar_kv_cache = self.kv_cache(key, value, decoder_segment_ids, model_mode, use_ragged=use_ragged)
 
     prefill_unnormalized_output, prefill_exponentials_max, prefill_exponentials_sum = self.apply_attention(
         query=query,
@@ -935,7 +942,7 @@ class AttentionOp(nn.Module):
         decoder_segment_ids=ar_kv_cache[2],
         lengths=ar_kv_cache[3],
         model_mode=model_mode,
-        use_ragged=True,
+        use_ragged=use_ragged,
     )
     if ar_output is not None:
       unnormalized_outputs = [prefill_unnormalized_output, ar_output]
