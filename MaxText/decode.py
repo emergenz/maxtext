@@ -33,7 +33,7 @@ def main(config):
   vocab = token_utils.load_vocab(metadata.path, metadata.extra_ids)
   tokenizer = vocab.tokenizer
   decode_state = engine.init_decode_state()
-  for i in range(1):
+  for i in range(12):
     print(f"\nIter {i}")
     tokens, true_length = token_utils.tokenize_and_pad(
         text, vocab, is_bos=True, prefill_lengths=[config.max_prefill_predict_length]
@@ -41,11 +41,12 @@ def main(config):
     assert tokens.size <= config.max_prefill_predict_length, "can't take too many tokens"
     assert config.quantization != "fp8", "fp8 on NVIDIA GPUs is not supported in decode.py yet"
     prefill_result = engine.prefill(params=params, padded_tokens=tokens, true_length=true_length)
-    slot = i % 4
+    slot = i % 2
 
     decode_state = engine.insert(prefill_result, decode_state, slot=slot)
 
-    steps = range(config.max_prefill_predict_length, config.max_target_length)
+    # steps = range(config.max_prefill_predict_length, config.max_target_length)
+    steps = range(64)
     # steps = range(config.max_prefill_predict_length, config.max_prefill_predict_length + 12)
     sampled_tokens_list = []
     for _ in steps:

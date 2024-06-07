@@ -248,23 +248,45 @@ class MaxEngine(engine_api.Engine):
 
     def copy(path, partial_cache, full_cache, annotations):
       path_key = path[-1].key
-      if path_key in ["cache_ar_index", "cached_ar_key", "cached_ar_value", "cached_ar_key_scale", "cached_ar_value_scale"]:
+      if path_key in ["cache_ar_index", "cached_ar_key_scale", "cached_ar_value_scale"]:
         return full_cache  # we don't even zero these out because we can mask them out.
 
       batch_idx = annotations.index("cache_batch") if "cache_batch" in annotations else -1
       if batch_idx < 0:
         raise ValueError(f"Batch index {batch_idx=} shouldn't be less than zero for {path_key}, got {annotations=}")
 
-      if path_key == "cache_ar_segment_id":
-        ### goal: zero this out in case there is existing data
+      
+      # cache_ar_segment_id: full_cache.shape=(4, 256)
+      # cache_ar_segment_id: zeros.shape=(1, 256)
+      # cached_ar_key: full_cache.shape=(256, 32, 4, 128)
+      # cached_ar_key: zeros.shape=(256, 32, 1, 128)
+      # cached_ar_value: full_cache.shape=(256, 32, 4, 128)
+      # cached_ar_value: zeros.shape=(256, 32, 1, 128)
+
+      if path_key in ["cache_ar_segment_id"]:
         s = list(full_cache.shape)
         s[batch_idx] = 1
         zeros = jnp.zeros(tuple(s), dtype=jnp.int32)
+        # print(f"{path_key}: {full_cache.shape=}")
+        # print(f"{path_key}: {partial_cache.shape=}")
+        # print(f"{path_key}: {zeros.shape=}")
+        return jax.lax.dynamic_update_index_in_dim(full_cache, zeros, slot, batch_idx)
+        full_cache = jax.lax.dynamic_update_index_in_dim(full_cache, partial_cache, slot, batch_idx)
+      elif path_key in ["cached_ar_value", "cached_ar_key"]:
+        s = list(full_cache.shape)
+        s[batch_idx] = 1
+        zeros = jnp.zeros(tuple(s), dtype=jnp.bfloat16)
+        # print(f"{path_key}: {full_cache.shape=}")
+        # print(f"{path_key}: {partial_cache.shape=}")
+        # print(f"{path_key}: {zeros.shape=}")
         return jax.lax.dynamic_update_index_in_dim(full_cache, zeros, slot, batch_idx)
       elif path_key == "cache_prefill_segment_id":
         s = list(full_cache.shape)
         s[batch_idx] = 1
         zeros = jnp.zeros(tuple(s), dtype=jnp.int32)
+        # print(f"{path_key}: {full_cache.shape=}")
+        # print(f"{path_key}: {partial_cache.shape=}")
+        # print(f"{path_key}: {zeros.shape=}")
         ## zero out in case prefill cache is too small to cover
         full_cache = jax.lax.dynamic_update_index_in_dim(full_cache, zeros, slot, batch_idx)
         ## copy prefill cachce
