@@ -149,6 +149,8 @@ UserFacingNameToSystemCharacteristics = {
     "v5p-12288": SystemCharacteristics("tpu", "v5:16x16x24", "megacore", (2, 2, 1), 6144),
     "v5p-13824": SystemCharacteristics("tpu", "v5:12x24x24", "megacore", (2, 2, 1), 6912),
     "v5p-17920": SystemCharacteristics("tpu", "v5:16x20x28", "megacore", (2, 2, 1), 8960),
+    # A3 - H100
+    "a3": SystemCharacteristics("gpu", "a3:8", None, None, 8)
 }
 
 

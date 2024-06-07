@@ -55,13 +55,22 @@ def validate_config(config):
 def get_topology_mesh(config):
   """Get the target hardware devices, and create configured mesh with them"""
   target_hardware = accelerator_to_spec_map.get_system_characteristics(config.compile_topology)
-  topology_devices = get_topology_desc(
-      platform=target_hardware.platform,
-      topology_name=target_hardware.topology_name,
-      chip_config_name=target_hardware.chip_config_name,
-      chips_per_host_bounds=target_hardware.chips_per_host_bounds,
-      num_slices=config.compile_topology_num_slices,
-  ).devices
+  if target_hardware.platform == 'gpu':
+    # AOT compilation on GPU uses the mock GPU client.
+    jax.config.update('use_mock_gpu_client', True)
+    # TODO(jonbolin): don't hardcode this
+    # mock_num_gpus is a misnomer - it mocks the number of hosts. This will become:
+    # jax.config.update('mock_num_gpus', config.compile_topology_num_slices)
+    jax.config.update('mock_num_gpus', 2)
+    topology_devices = jax.devices()
+  else:
+    topology_devices = get_topology_desc(
+        platform=target_hardware.platform,
+        topology_name=target_hardware.topology_name,
+        chip_config_name=target_hardware.chip_config_name,
+        chips_per_host_bounds=target_hardware.chips_per_host_bounds,
+        num_slices=config.compile_topology_num_slices,
+    ).devices
   topology_device_mesh = max_utils.create_device_mesh(config, topology_devices)
   topology_mesh = Mesh(topology_device_mesh, config.mesh_axes)
   return topology_mesh

@@ -119,7 +119,7 @@ config = None
 def print_system_information():
   max_logging.log(f"System Information: Jax Version: {jax.__version__}")
   max_logging.log(f"System Information: Jaxlib Version: {jax.lib.__version__}")
-  max_logging.log(f"System Information: Jax Backend: {jax.lib.xla_bridge.get_backend().platform_version}")
+  #max_logging.log(f"System Information: Jax Backend: {jax.lib.xla_bridge.get_backend().platform_version}")
 
 
 def _lists_to_tuples(l: list[Any]) -> Union[tuple[Any], list[Any]]:
@@ -378,6 +378,9 @@ def calculate_global_batch_sizes(raw_keys):
 def get_num_target_devices(raw_keys):
   compile_topology = accelerator_to_spec_map.get_system_characteristics(raw_keys.get("compile_topology", ""))
   if compile_topology is not None:
+    # TODO(jonbolin): Remove this special case when slice_index is set properly
+    if compile_topology.platform == 'gpu':
+        return compile_topology.devices_per_slice * 2
     devices_per_slice = compile_topology.devices_per_slice
     return int(devices_per_slice * raw_keys["compile_topology_num_slices"])
   else:
