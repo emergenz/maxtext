@@ -202,8 +202,7 @@ class AttentionOp(nn.Module):
       raise ValueError(f"Unexpected attention kernel {self.attention_kernel=}.")
 
 
-  def mqa_attention_ref(self, query: Array, key: Array, value: Array, decoder_segment_ids: Array) -> tuple[Array, Array, Array]:
-      lengths = decoder_segment_ids.sum(axis=1)
+  def mqa_attention_ref(self, query: Array, key: Array, value: Array, lengths: Array) -> tuple[Array, Array, Array]:
       vmap_mqa_ref = jax.vmap(mqa_reference, in_axes=[1, 1, 1, None], out_axes=2)
       o, m, l  = vmap_mqa_ref(query, key, value, lengths)
       return o, m, l
@@ -847,10 +846,8 @@ class AttentionOp(nn.Module):
     )
     cache_ar_index.value = jnp.mod(cache_ar_index.value + 1, self.max_target_length - self.max_prefill_predict_length)
 
-    cache_ar_lengths.value = cache_ar_lengths.value.at[0].add(1)
-    cache_ar_lengths.value = cache_ar_lengths.value.at[1].add(1)
-    cache_ar_lengths.value = cache_ar_lengths.value.at[2].add(1)
-    cache_ar_lengths.value = cache_ar_lengths.value.at[3].add(1)
+    cache_ar_lengths.value = cache_ar_lengths.value.at[:].add(1)
+    # cache_ar_lengths.value = cache_ar_lengths.value.at[:].min(self.max_target_length - self.max_prefill_predict_length)
 
     # Prep and return both prefill and ar caches
     cached_prefill_key_var, cached_prefill_value_var, cached_prefill_segment_id = self._get_prefill_cache(
@@ -919,7 +916,7 @@ class AttentionOp(nn.Module):
 
   @nn.compact
   def __call__(self, query, key, value, decoder_segment_ids, model_mode):
-    use_ragged = False
+    use_ragged = True
     prefill_kv_cache, ar_kv_cache = self.kv_cache(key, value, decoder_segment_ids, model_mode, use_ragged=use_ragged)
 
     prefill_unnormalized_output, prefill_exponentials_max, prefill_exponentials_sum = self.apply_attention(
@@ -1141,6 +1138,8 @@ class Attention(nn.Module):
       value = self.kv_projection(inputs_kv, proj_name="value")
 
     # apply ROPE
+    # jax.debug.print("Attention::__call__().inputs_positions.shape: {}", inputs_positions.shape)
+    # jax.debug.print("Attention::__call__().inputs_positions: {}", inputs_positions)
     query = RotaryEmbedding(embedding_dims=self.head_dim, name="query_rotary")(inputs=query, position=inputs_positions)
     key = self.key_rotary(key, inputs_positions)
 
