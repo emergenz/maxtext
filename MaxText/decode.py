@@ -15,6 +15,7 @@
 """CLI Utility for Running Inference on a Single Stream"""
 
 import jax
+import json
 
 import maxengine
 from jetstream.engine import token_utils
@@ -31,22 +32,17 @@ def main(config):
 
   texts = [
     "Summarize the main ideas of Jeff Walker's Product Launch Formula into bullet points as it pertains to a growth marketing agency implementing these strategies and tactics for their clients...",
-    "I like to eat apples and",
-    "What should I do in Seattle on vacation?",
-    "I can hear the bells",
-    "What time is the",
   ]
   steps_list = [
-    512,
     128,
-    256,
   ]
   metadata = engine.get_tokenizer()
   vocab = token_utils.load_vocab(metadata.path, metadata.extra_ids)
   tokenizer = vocab.tokenizer
   decode_state = engine.init_decode_state()
-  for i in range(12):
-    slot = i % 4
+  slot_results = {}
+  for i in range(32):
+    slot = i % 32
     text = texts[0]
     steps = steps_list[i % len(steps_list)]
     print(f"\nIter {i}, {slot=}, {steps=}")
@@ -68,14 +64,19 @@ def main(config):
 
     results = [sampled_tokens.get_result_at_slot(slot).tokens.item() for sampled_tokens in sampled_tokens_list]
     output = tokenizer.detokenize(results)
-    print(f"Input `{text}` -> `{output}`")
+    # print(type(output))
+    # print(f"Input `{text}` -> `{output}`")
 
+    if output not in slot_results:
+      slot_results[output] = set()
+    slot_results[output].add(slot)
+      
     if config.autoregressive_decode_assert != "":
       assert (
           output == config.autoregressive_decode_assert
       ), f"generated text mismatch {output=} {config.autoregressive_decode_assert=}"
 
-
+  print(slot_results)
 def validate_config(config):
   assert config.load_full_state_path == "", (
       "Decode doesn't operate on full states! Convert to parameter checkpoint first." "Using generate_param_only_checkpoint."

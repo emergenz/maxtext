@@ -286,7 +286,7 @@ class MaxEngine(engine_api.Engine):
         full_cache = jax.lax.dynamic_update_index_in_dim(full_cache, partial_cache, slot, batch_idx)
         return full_cache
       elif path_key == "cache_ar_lengths":
-        jax.debug.print("cache_ar_lengths: {}", full_cache)
+        # jax.debug.print("cache_ar_lengths: {}", full_cache)
         return full_cache.at[slot].set(0)
       elif path_key in [
           "cached_prefill_key",
@@ -314,9 +314,9 @@ class MaxEngine(engine_api.Engine):
     inserted_generated_tokens = jax.lax.with_sharding_constraint(inserted_generated_tokens, self.replicated_sharding)
     inserted_next_pos = jax.lax.with_sharding_constraint(inserted_next_pos, self.replicated_sharding)
     inserted_cache = jax.lax.with_sharding_constraint(inserted_cache, self.kv_cache_shardings)
-    jax.debug.print("decode_state[next_pos]: {}", decode_state["next_pos"])
-    jax.debug.print("unboxed_prefix[next_pos]: {}", unboxed_prefix["next_pos"])
-    jax.debug.print("inserted_next_pos: {}", inserted_next_pos)
+    # jax.debug.print("decode_state[next_pos]: {}", decode_state["next_pos"])
+    # jax.debug.print("unboxed_prefix[next_pos]: {}", unboxed_prefix["next_pos"])
+    # jax.debug.print("inserted_next_pos: {}", inserted_next_pos)
 
     return {
         "logits": inserted_logits,
