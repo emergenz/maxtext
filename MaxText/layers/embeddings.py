@@ -142,6 +142,12 @@ class RotaryEmbedding(nn.Module):
       a jax.Array of shape [B, S, N, H] which includes the inputs together with
       the rotary position embedding incorporated in it.
     """
+    print(f"RotaryEmbedding - {inputs.shape=}")
+    print(f"RotaryEmbedding - {position.shape=}")
+    print(f"RotaryEmbedding - {self.embedding_dims=}")
+    # RotaryEmbedding - inputs.shape=(4, 32, 1, 128)
+    # RotaryEmbedding - position.shape=(4, 1)
+    # RotaryEmbedding - self.embedding_dims=128
     assert position is not None
     if len(inputs.shape) != 4:
       raise ValueError("Input is assumed to be a rank 4 tensor of shape" "[batch, sequence, heads, dims].")
@@ -152,17 +158,25 @@ class RotaryEmbedding(nn.Module):
     half_embedding_dim = self.embedding_dims // 2
     fraction = 2 * jnp.arange(0, half_embedding_dim) / self.embedding_dims
     timescale = self.min_timescale * (self.max_timescale / self.min_timescale) ** fraction
-    position = position[:, :, jnp.newaxis, jnp.newaxis]
+    position = position[:, jnp.newaxis, :, jnp.newaxis]
     sinusoid_inp = position / timescale
     sin = jnp.sin(sinusoid_inp).astype(inputs.dtype)
     cos = jnp.cos(sinusoid_inp).astype(inputs.dtype)
     first_half, second_half = jnp.split(inputs, 2, axis=-1)
     first_part = first_half * cos - second_half * sin
     second_part = second_half * cos + first_half * sin
+
+    print(f"RotaryEmbedding - {first_half.shape=}")
+    print(f"RotaryEmbedding - {second_half.shape=}")
+    # RotaryEmbedding - first_half.shape=(4, 32, 1, 64)
+    # RotaryEmbedding - second_half.shape=(4, 32, 1, 64)
     if self.cast_as_fprop_dtype:
       first_part = first_part.astype(self.fprop_dtype)
       second_part = second_part.astype(self.fprop_dtype)
     x_out = jnp.concatenate((first_part, second_part), axis=-1)
+    print(f"RotaryEmbedding - {x_out.shape=}")
+    # RotaryEmbedding - x_out.shape=(4, 32, 1, 128)
+    # x_out = jnp.swapaxes(x_out, 1, 2)
     return x_out
 
 
@@ -175,6 +189,8 @@ class PositionalEmbedding(nn.Module):
       input_embedding: jax.Array,
       position: jax.Array,
   ) -> jax.Array:
+    print(f"PositionalEmbedding - {input_embedding.shape=}")
+    print(f"PositionalEmbedding - {position.shape=}")
     num_timescales = self.embedding_dims // 2
     log_timescale_increment = jnp.log(float(self.max_wavelength)) / jnp.maximum(
         jnp.asarray(num_timescales, dtype=jnp.float32) - 1, 1
@@ -186,4 +202,5 @@ class PositionalEmbedding(nn.Module):
     signal = jnp.concatenate([jnp.sin(scaled_time), jnp.cos(scaled_time)], axis=-1)
     # signal = jnp.pad(signal, [[0, jnp.mod(self.embedding_dims, 2)]])
     position_embedding = signal.astype(jnp.float32)
+    print(f"PositionalEmbedding - {position_embedding.shape=}")
     return input_embedding + position_embedding

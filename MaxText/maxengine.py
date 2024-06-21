@@ -167,11 +167,14 @@ class MaxEngine(engine_api.Engine):
 
     next_pos = jnp.full((1, 1), true_length, dtype=jnp.int32)
     generated_tokens = jnp.zeros((1, 1), dtype=jnp.int32)
+    print(f"prefill - {flat_logits.shape=}")
+    # prefill - flat_logits.shape=(1, 1024, 32000)
     selected_logits = jax.lax.dynamic_slice(
         flat_logits, (0, true_length - 1, 0), (flat_logits.shape[0], 1, flat_logits.shape[2])
     )
+    print(f"prefill - {selected_logits.shape=}")
+    # prefill - selected_logits.shape=(1, 1, 32000)
     selected_logits = jax.lax.with_sharding_constraint(selected_logits, self.replicated_sharding)
-
     return {
         "logits": selected_logits,
         "cache": new_vars["cache"],

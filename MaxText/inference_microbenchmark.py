@@ -234,43 +234,43 @@ def main(config):
   num_model_params, model_size, _ = max_utils.summarize_pytree_data(params, name="Model")
 
   benchmark_results = {}
-  if "prefill" in stages_to_benchmark:
+  # if "prefill" in stages_to_benchmark:
 
-    benchmark_results["Prefill_Result"] = {}
-    benchmark_results["Prefill"] = {}
-    benchmark_results["Prefill_Insert"] = {}
-    prefill_tokens = {}
-    prefill_true_lengths = {}
+  #   benchmark_results["Prefill_Result"] = {}
+  #   benchmark_results["Prefill"] = {}
+  #   benchmark_results["Prefill_Insert"] = {}
+  #   prefill_tokens = {}
+  #   prefill_true_lengths = {}
 
-    for prefill_length in prefill_lengths:
-      prefill_tokens[prefill_length], prefill_true_lengths[prefill_length] = token_utils.tokenize_and_pad(
-        text, vocab, is_bos=True, prefill_lengths=[prefill_length]
-      )
-      benchmark_results["Prefill_Result"]["prefill_length"] = summarize_prefill_result(
-        engine, params, prefill_tokens[prefill_length], prefill_true_lengths[prefill_length]
-      )
+  #   for prefill_length in prefill_lengths:
+  #     prefill_tokens[prefill_length], prefill_true_lengths[prefill_length] = token_utils.tokenize_and_pad(
+  #       text, vocab, is_bos=True, prefill_lengths=[prefill_length]
+  #     )
+  #     benchmark_results["Prefill_Result"]["prefill_length"] = summarize_prefill_result(
+  #       engine, params, prefill_tokens[prefill_length], prefill_true_lengths[prefill_length]
+  #     )
 
-    for prefill_length in prefill_lengths:
-      benchmark_results["Prefill"][prefill_length] = prefill_benchmark(
-        config,
-        engine,
-        params,
-        prefill_tokens[prefill_length],
-        prefill_true_lengths[prefill_length],
-        num_model_params,
-        benchmark_loop_iters
-      )
+  #   for prefill_length in prefill_lengths:
+  #     benchmark_results["Prefill"][prefill_length] = prefill_benchmark(
+  #       config,
+  #       engine,
+  #       params,
+  #       prefill_tokens[prefill_length],
+  #       prefill_true_lengths[prefill_length],
+  #       num_model_params,
+  #       benchmark_loop_iters
+  #     )
 
-      benchmark_results["Prefill_Insert"][prefill_length], decode_state = prefill_insert_benchmark(
-        config,
-        engine,
-        decode_state,
-        params,
-        engine.max_concurrent_decodes,
-        prefill_tokens[prefill_length],
-        prefill_true_lengths[prefill_length],
-        benchmark_loop_iters
-      )
+  #     benchmark_results["Prefill_Insert"][prefill_length], decode_state = prefill_insert_benchmark(
+  #       config,
+  #       engine,
+  #       decode_state,
+  #       params,
+  #       engine.max_concurrent_decodes,
+  #       prefill_tokens[prefill_length],
+  #       prefill_true_lengths[prefill_length],
+  #       benchmark_loop_iters
+  #     )
 
   if "generate" in stages_to_benchmark:
     benchmark_results["AutoRegressive"], decode_state = ar_benchmark(
