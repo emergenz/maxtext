@@ -134,10 +134,10 @@ def ragged_mqa(
   # ragged_mqa (4, 1024, 128)
   # ragged_mqa (4, 1024, 128)
   # ragged_mqa (4,)
-  jax.debug.print("ragged_mqa q.shape - {}", q.shape)
-  jax.debug.print("ragged_mqa k.shape - {}", k.shape)
-  jax.debug.print("ragged_mqa v.shape - {}", v.shape)
-  jax.debug.print("ragged_mqa lengths.shape - {}", lengths.shape)
+  # jax.debug.print("ragged_mqa q.shape - {}", q.shape)
+  # jax.debug.print("ragged_mqa k.shape - {}", k.shape)
+  # jax.debug.print("ragged_mqa v.shape - {}", v.shape)
+  # jax.debug.print("ragged_mqa lengths.shape - {}", lengths.shape)
   assert lengths.shape == (batch_size,)
   assert lengths.dtype == jnp.int32
   seq_len = k.shape[1]  
