@@ -126,6 +126,18 @@ def ragged_mqa(
 ) -> tuple[jax.Array, jax.Array, jax.Array]:
   """Ragged multi query attention."""
   batch_size, num_heads, head_dim = q.shape 
+  print(f"ragged_mqa {q.shape}")
+  print(f"ragged_mqa {k.shape}")
+  print(f"ragged_mqa {v.shape}")
+  print(f"ragged_mqa {lengths.shape}")
+  # ragged_mqa (4, 1, 128)
+  # ragged_mqa (4, 1024, 128)
+  # ragged_mqa (4, 1024, 128)
+  # ragged_mqa (4,)
+  jax.debug.print("ragged_mqa q.shape - {}", q.shape)
+  jax.debug.print("ragged_mqa k.shape - {}", k.shape)
+  jax.debug.print("ragged_mqa v.shape - {}", v.shape)
+  jax.debug.print("ragged_mqa lengths.shape - {}", lengths.shape)
   assert lengths.shape == (batch_size,)
   assert lengths.dtype == jnp.int32
   seq_len = k.shape[1]  

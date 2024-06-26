@@ -158,16 +158,20 @@ class RotaryEmbedding(nn.Module):
     half_embedding_dim = self.embedding_dims // 2
     fraction = 2 * jnp.arange(0, half_embedding_dim) / self.embedding_dims
     timescale = self.min_timescale * (self.max_timescale / self.min_timescale) ** fraction
-    position = position[:, jnp.newaxis, :, jnp.newaxis]
+    position = position[jnp.newaxis, :, :, jnp.newaxis]
+    print(f"RotaryEmbedding - revised {position.shape=}")
+    # RotaryEmbedding - revised position.shape=(4, 1, 2048, 1)
     sinusoid_inp = position / timescale
     sin = jnp.sin(sinusoid_inp).astype(inputs.dtype)
     cos = jnp.cos(sinusoid_inp).astype(inputs.dtype)
     first_half, second_half = jnp.split(inputs, 2, axis=-1)
+    print(f"RotaryEmbedding - {first_half.shape=}")
+    print(f"RotaryEmbedding - {second_half.shape=}")
+    # RotaryEmbedding - first_half.shape=(4, 2048, 32, 64)
+    # RotaryEmbedding - second_half.shape=(4, 2048, 32, 64)
     first_part = first_half * cos - second_half * sin
     second_part = second_half * cos + first_half * sin
 
-    print(f"RotaryEmbedding - {first_half.shape=}")
-    print(f"RotaryEmbedding - {second_half.shape=}")
     # RotaryEmbedding - first_half.shape=(4, 32, 1, 64)
     # RotaryEmbedding - second_half.shape=(4, 32, 1, 64)
     if self.cast_as_fprop_dtype:
