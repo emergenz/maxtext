@@ -28,6 +28,7 @@ from jax.experimental.pallas.ops.tpu.splash_attention import splash_attention_ma
 from jax.experimental.pallas.ops.tpu.splash_attention import splash_attention_kernel
 from kernels.ragged_attention import mqa_reference, ragged_mqa
 import jax.numpy as jnp
+from jax.sharding import PartitionSpec as P
 
 import common_types
 from layers import embeddings
@@ -172,11 +173,9 @@ class AttentionOp(nn.Module):
     self.check_attention_inputs(query, key, value)
     length = query.shape[-3]
     # if False:
-    if (
-      use_ragged 
-      and model_mode == common_types.MODEL_MODE_AUTOREGRESSIVE 
-      and lengths is not None
-    ):
+    if use_ragged and model_mode == common_types.MODEL_MODE_AUTOREGRESSIVE:
+      if lengths is None:
+        lengths = jnp.sum(decoder_segment_ids, axis=-1)
       return self.ragged_attention(query, key, value, lengths)
     elif (
         self.attention_kernel == "dot_product"
@@ -758,28 +757,34 @@ class AttentionOp(nn.Module):
     one_hot_indices = one_hot_indices.astype(int)
 
     ar_key = cached_key_var.value
+    ar_value = cached_value_var.value
 
     if use_ragged:
-      positions = [slice(None)] * len(ar_key.shape)
-      positions[ar_key_layout.index(CACHE_SEQUENCE)] = lengths
-      ar_key = ar_key.at[jnp.index_exp[tuple(positions)]].set(one_token_key_shaped_for_cache)
+      # positions = [slice(None)] * len(ar_key.shape)
+      # positions[ar_key_layout.index(CACHE_SEQUENCE)] = lengths
+      # print(f"{positions=}")
+      # print(f"{ar_key.shape=}")
+      # print(f"{one_token_key_shaped_for_cache.shape=}")
+      # ar_key.shape=(48, 32, 1024, 128)
+      # one_token_key_shaped_for_cache.shape=(48, 32, 1, 128)
+
+      for b in range(ar_key.shape[0]):
+        # jax.debug.print("length: {}", length)
+        # ar_key = ar_key.at[b,:,lengths[b],:].set(one_token_key_shaped_for_cache[b,:,0,:])
+        # ar_value = ar_value.at[b,:,lengths[b],:].set(one_token_value_shaped_for_cache[b,:,0,:])
+        ar_key = jax.lax.dynamic_update_slice(ar_key, one_token_key_shaped_for_cache, (b, 0, lengths[b], 0))
+        ar_value = jax.lax.dynamic_update_slice(ar_value, one_token_value_shaped_for_cache, (b, 0, lengths[b], 0))
+        # ar_key = jax.lax.dynamic_update_index_in_dim(ar_key, one_token_key_shaped_for_cache, ar_key_layout.index(CACHE_SEQUENCE))
+        # ar_value = jax.lax.dynamic_update_index_in_dim(ar_value, one_token_key_shaped_for_cache, ar_key_layout.index(CACHE_SEQUENCE))
     else:
       ar_key = jax.lax.dynamic_update_index_in_dim(ar_key, one_token_key_shaped_for_cache, jnp.squeeze(one_hot_indices), ar_key_layout.index(CACHE_SEQUENCE))
+      ar_value = jax.lax.dynamic_update_index_in_dim(ar_value, one_token_value_shaped_for_cache, jnp.squeeze(one_hot_indices), ar_key_layout.index(CACHE_SEQUENCE))
 
     ar_key = nn.with_logical_constraint(
         ar_key,
         ar_key_layout
     )
     cached_key_var.value = ar_key
-
-    ar_value = cached_value_var.value
-    if use_ragged:
-      positions = [slice(None)] * len(ar_value.shape)
-      positions[ar_value_layout.index(CACHE_SEQUENCE)] = lengths
-      ar_value = ar_value.at[jnp.index_exp[tuple(positions)]].set(one_token_value_shaped_for_cache)
-    else:
-      ar_value = jax.lax.dynamic_update_index_in_dim(ar_value, one_token_value_shaped_for_cache, jnp.squeeze(one_hot_indices), ar_key_layout.index(CACHE_SEQUENCE))
-
     ar_value = nn.with_logical_constraint(
         ar_value,
         ar_value_layout,
@@ -935,6 +940,7 @@ class AttentionOp(nn.Module):
   def __call__(self, query, key, value, decoder_segment_ids, model_mode):
     use_ragged = True
     prefill_kv_cache, ar_kv_cache = self.kv_cache(key, value, decoder_segment_ids, model_mode, use_ragged=use_ragged)
+    
 
     prefill_unnormalized_output, prefill_exponentials_max, prefill_exponentials_sum = self.apply_attention(
         query=query,
@@ -943,7 +949,7 @@ class AttentionOp(nn.Module):
         decoder_segment_ids=prefill_kv_cache[2],
         lengths=None,
         model_mode=model_mode,
-        use_ragged=False,
+        use_ragged=use_ragged,
     )
 
     # Return the "prefill" cache if it actually the combined prefill+ar kv cache

@@ -225,7 +225,7 @@ autoregressive_decode_assert: ""
 
 # For nsys profiler, pass the training command to nsys command
 # e.g. nsys profile -s none --force-overwrite true --capture-range=cudaProfilerApi --capture-range-end=stop {training command} 
-profiler: "" # Supported profiler: '', xplane, nsys
+profiler: "xplane" # Supported profiler: '', xplane, nsys
 # If set to true, upload all profiler results from all hosts. Otherwise, only upload the profiler result from the first host.
 upload_all_profiler_results: False
 # Skip first n steps for profiling, to omit things like compilation and to give
@@ -303,8 +303,8 @@ inference_microbenchmark_log_file_path: ""
 # KV Cache layout control
 # Logical layout: 0,1,2,3 ; CACHE_BATCH, CACHE_SEQUENCE, CACHE_HEADS, CACHE_KV
 # Default layout: 1,2,0,3 ; CACHE_SEQUENCE, CACHE_HEADS, CACHE_BATCH, CACHE_KV
-prefill_cache_axis_order: "1,2,0,3"
-ar_cache_axis_order: "1,2,0,3"
+prefill_cache_axis_order: "0,2,1,3"
+ar_cache_axis_order: "0,2,1,3"
 
 # Compute layout control
 # Default layout: 0,1,2,3 ; BATCH, LENGTH, HEAD, D_KV
