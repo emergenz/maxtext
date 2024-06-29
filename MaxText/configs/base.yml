@@ -321,3 +321,6 @@ enable_checkpoint_standard_logger: False
 
 # Single-controller
 enable_single_controller: False
+
+# Ragged Attention
+ragged_attention: True

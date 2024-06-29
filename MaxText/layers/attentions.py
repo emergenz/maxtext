@@ -739,6 +739,39 @@ class AttentionOp(nn.Module):
         tuple[Array, Array]: Updated caches for key and value with new token info added
     """
 
+    # ragged_qkv = nn.logical_to_mesh_axes(self.ragged_qkv_axis_names)
+    # ragged_lengths = nn.logical_to_mesh_axes(self.ragged_lengths_names)
+    # ragged_output = nn.logical_to_mesh_axes(self.kv_cache_logical_layout)
+    # @functools.partial(
+    #     shard_map,
+    #     mesh=self.mesh,
+    #     in_specs=(
+    #       ragged_qkv,
+    #       ragged_qkv,
+    #       ragged_lengths,
+    #     ),
+    #     out_specs=ragged_qkv,
+    #     check_rep=False,
+    # )
+    # def wrap_update(ar_cache, one_token, lengths):
+    #   for b in range(ar_key.shape[0]):
+    #     ar_cache = ar_cache.at[b, :, lengths[b], :].set(one_token[b, :, 0, :])
+    #   return ar_cache
+    # #   vmap_ragged_mqa = jax.vmap(ragged_mqa, in_axes=[1, 1, 1, None], out_axes=2)
+    # #   o, m, l  = vmap_ragged_mqa(query, key, value, lengths)
+    # #   m = jnp.expand_dims(m, axis=-1)
+    # #   l = jnp.expand_dims(l, axis=-1)
+    # #   o = o * l 
+    # #   return o, m, l
+    #   # for b in range(ar_cache.shape[0]):
+    #   #   ar_cache = ar_cache.at[b,:,lengths[b],:].set(one_token[b,:,0,:])
+    # dynamic_update = jax.vmap(jax.lax.dynamic_update_slice, in_axes=(0, 0, (None, 0, None)))
+    # ar_key = dynamic_update(ar_key, one_token_key_shaped_for_cache, (0, lengths, 0))
+    # ar_value = dynamic_update(ar_value, one_token_value_shaped_for_cache, (0, lengths, 0))
+    #   return ar_key, ar_value
+    #   # return ar_cache
+
+    
     cached_key_var, cached_key_scale_var = cached_key_vars
     cached_value_var, cached_value_scale_var = cached_value_vars
 
@@ -760,25 +793,76 @@ class AttentionOp(nn.Module):
     ar_value = cached_value_var.value
 
     if use_ragged:
+      # Vmapped update
+      # dynamic_update = jax.vmap(jax.lax.dynamic_update_slice, in_axes=(0, 0, (None, 0, None)))
+      # ar_key is now of shape    (32, 1024, 128)
+      # one_token is now of shape (32, 1, 128)
+      # ar_key = dynamic_update(ar_key, one_token_key_shaped_for_cache, (0, lengths, 0)) 
+      # ar_value = dynamic_update(ar_value, one_token_value_shaped_for_cache, (0, lengths, 0))
+
+      # ar_key = wrap_update(ar_key, one_token_key_shaped_for_cache, lengths)
+      # ar_value = wrap_update(ar_value, one_token_value_shaped_for_cache, lengths)
+
+
       # positions = [slice(None)] * len(ar_key.shape)
       # positions[ar_key_layout.index(CACHE_SEQUENCE)] = lengths
       # print(f"{positions=}")
       # print(f"{ar_key.shape=}")
       # print(f"{one_token_key_shaped_for_cache.shape=}")
+
+
       # ar_key.shape=(48, 32, 1024, 128)
       # one_token_key_shaped_for_cache.shape=(48, 32, 1, 128)
+      # lengths.shape=[48]
 
-      for b in range(ar_key.shape[0]):
-        # jax.debug.print("length: {}", length)
-        # ar_key = ar_key.at[b,:,lengths[b],:].set(one_token_key_shaped_for_cache[b,:,0,:])
-        # ar_value = ar_value.at[b,:,lengths[b],:].set(one_token_value_shaped_for_cache[b,:,0,:])
-        ar_key = jax.lax.dynamic_update_slice(ar_key, one_token_key_shaped_for_cache, (b, 0, lengths[b], 0))
-        ar_value = jax.lax.dynamic_update_slice(ar_value, one_token_value_shaped_for_cache, (b, 0, lengths[b], 0))
-        # ar_key = jax.lax.dynamic_update_index_in_dim(ar_key, one_token_key_shaped_for_cache, ar_key_layout.index(CACHE_SEQUENCE))
-        # ar_value = jax.lax.dynamic_update_index_in_dim(ar_value, one_token_key_shaped_for_cache, ar_key_layout.index(CACHE_SEQUENCE))
+      # for b in range(ar_value.shape[0]):
+      #   ar_key = jax.lax.dynamic_update_slice(ar_key, one_token_key_shaped_for_cache, (b, 0, lengths[b], 0))
+      #   ar_value = jax.lax.dynamic_update_slice(ar_value, one_token_value_shaped_for_cache, (b, 0, lengths[b], 0))
+
+      print(f"{ar_key.shape=}")
+      print(f"{one_token_key_shaped_for_cache.shape=}")
+      # print(f"{one_token_key_shaped_for_cache[0,:,:,:].shape=}")
+      # print(f"{one_token_key_shaped_for_cache[0:1,:,:,:].shape=}")
+    
+      # for b in range(ar_value.shape[0]):
+      #   ar_key = jax.lax.dynamic_update_slice(ar_key, one_token_key_shaped_for_cache, (b, 0, lengths[b], 0))
+      #   ar_value = jax.lax.dynamic_update_slice(ar_value, one_token_value_shaped_for_cache, (b, 0, lengths[b], 0))
+
+      # for b in range(ar_value.shape[0]):
+      #   ar_key = jax.lax.dynamic_update_slice(ar_key, one_token_key_shaped_for_cache, (b:b+1, 0, lengths[b], 0))
+      #   ar_value = jax.lax.dynamic_update_slice(ar_value, one_token_value_shaped_for_cache, (b:b+1, 0, lengths[b], 0))
+
+      # for b in range(ar_key.shape[0]):
+      #   ar_key = ar_key.at[b, :, lengths[b], :].set(one_token_key_shaped_for_cache[b, :, 0, :])
+      #   ar_value = ar_value.at[b, :, lengths[b], :].set(one_token_value_shaped_for_cache[b, :, 0, :])
+      # for b in range(ar_value.shape[0]):
+        # ar_key = jax.lax.dynamic_update_slice(ar_key, one_token_key_shaped_for_cache, (b, 0, lengths[b], 0))
+        # ar_key = dynamic_update(ar_key, one_token_key_shaped_for_cache, (0, lengths[b], 0))
+        # ar_value = dynamic_update(ar_value, one_token_value_shaped_for_cache, (0, lengths)
+
+        # ar_value = jax.lax.dynamic_update_slice(ar_value, one_token_value_shaped_for_cache, (b, 0, lengths[b], 0))
+
+      # ar_key = wrap_update(ar_key, one_token_key_shaped_for_cache, lengths)
+      # ar_value = wrap_update(ar_value, one_token_value_shaped_for_cache, lengths)
+
+
+      # vmapped dynamic update, all zeros works for 0213
+      dynamic_update = jax.vmap(jax.lax.dynamic_update_slice, in_axes=(0, 0, (None, 0, None)))
+      ar_key = dynamic_update(ar_key, one_token_key_shaped_for_cache, (0, lengths, 0))
+      ar_value = dynamic_update(ar_value, one_token_value_shaped_for_cache, (0, lengths, 0))
+
+
+      # tuple-based update
+      # positions = [slice(None)] * len(ar_value.shape) # (:, :, :, :)
+      # positions[ar_value_layout.index(CACHE_SEQUENCE)] = lengths  # (:, :, lengths, :)
+      # ar_value = ar_value.at[jnp.index_exp[tuple(positions)]].set(one_token_value_shaped_for_cache)
+      # ar_key = ar_key.at[jnp.index_exp[tuple(positions)]].set(one_token_key_shaped_for_cache)
+
     else:
       ar_key = jax.lax.dynamic_update_index_in_dim(ar_key, one_token_key_shaped_for_cache, jnp.squeeze(one_hot_indices), ar_key_layout.index(CACHE_SEQUENCE))
       ar_value = jax.lax.dynamic_update_index_in_dim(ar_value, one_token_value_shaped_for_cache, jnp.squeeze(one_hot_indices), ar_key_layout.index(CACHE_SEQUENCE))
+      # ar_key.shape=(48, 32, 1024, 128)
+      # one_token_key_shaped_for_cache.shape=(48, 32, 1, 128)
 
     ar_key = nn.with_logical_constraint(
         ar_key,
