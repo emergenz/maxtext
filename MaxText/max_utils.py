@@ -36,6 +36,7 @@ import flax
 from flax.training import train_state
 from flax import linen as nn
 from flax.linen import partitioning as nn_partitioning
+from diloco import DiLoCoTrainState
 
 import optax
 import os
@@ -419,9 +420,12 @@ def init_decode_state(apply_fn, params):
   return state
 
 
-def init_training_state(apply_fn, params, tx):
+def init_training_state(config, apply_fn, params, tx):
   """Init train state with null opt state for decode."""
-  state = train_state.TrainState.create(apply_fn=apply_fn, params=params, tx=tx)
+  if config.diloco_num_workers > 1:
+    state = DiLoCoTrainState.create(config, apply_fn=apply_fn, params=params, tx=tx)
+  else:
+    state = train_state.TrainState.create(apply_fn=apply_fn, params=params, tx=tx)
   return state
 
 
@@ -440,7 +444,7 @@ def init_initial_state(model, tx, config, is_training, key):
       jnp.ones(input_shape, dtype=jnp.int32),
   )
   if is_training:
-    return init_training_state(model.apply, model_vars, tx)
+    return init_training_state(config, model.apply, model_vars, tx)
   return init_decode_state(model.apply, model_vars)
 
 

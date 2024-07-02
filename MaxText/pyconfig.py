@@ -427,7 +427,7 @@ def get_individual_scales(scale):
 def calculate_global_batch_sizes(raw_keys):
   """Calculates target global batch size from target devices and per_device_batch"""
   per_device_batch_size = raw_keys["per_device_batch_size"]
-  if raw_keys["diloco_num_workers"] > 0:
+  if raw_keys["diloco_num_workers"] > 1:
     # Scale the batch size per outer step by the number of inner optimization steps to run.
     per_device_batch_size *= raw_keys["diloco_sync_period"]
   expansion_factor_real_data = raw_keys["expansion_factor_real_data"]
