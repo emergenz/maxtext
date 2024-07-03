@@ -389,8 +389,7 @@ class _HyperParameters:
 
 def validate_megablox_parallelism(raw_keys):
   if raw_keys["megablox"] and (using_tensor_parallelism(raw_keys) or
-                               using_sequence_parallelism(raw_keys) or
-                               using_pipeline_parallelism(raw_keys)):
+                               using_sequence_parallelism(raw_keys)):
     raise ValueError("Currently we only support Megablox with data parallelism.")
 
 def validate_and_update_keys(raw_keys, model_keys, config_name: str):
