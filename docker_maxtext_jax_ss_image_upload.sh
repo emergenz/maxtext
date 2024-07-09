@@ -14,14 +14,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# This scripts takes a docker image that already contains the MaxText dependencies, copies the local source code in and
-# uploads that image into GCR. Once in GCR the docker image can be used for development.
+
+# This script uses a pre-built JAX stable stack Docker image as the BASEIMAGE. This image includes pinned versions of JAX and other core and utility libraries, all of which have been thoroughly tested together.
+# It then copies the local source code into the image and uploads it to Google Container Registry (GCR).
+# This allows the image to be used for development within GCR.
 
 # Each time you update the base image via a "bash docker_maxtext_jax_ss_image_upload.sh", there will be a slow upload process
 # (minutes). However, if you are simply changing local code and not updating dependencies, uploading just takes a few seconds.
 
 # Example command:
-# bash docker_maxtext_jax_ss_image_upload.sh PROJECT_ID=sample_project BASEIMAGE=gcr.io/sample_project/jax-ss/tpu:jax0.4.28-rev1.0.0 CLOUD_IMAGE_NAME=maxtext-jax-ss-0.4.28-rev1.0.0 IMAGE_TAG=latest
+# bash docker_maxtext_jax_ss_image_upload.sh PROJECT_ID=sample_project BASEIMAGE=gcr.io/sample_project/jax-ss/tpu:jax0.4.28-rev1.0.0 CLOUD_IMAGE_NAME=maxtext-jax-ss-0.4.28-rev1.0.0 IMAGE_TAG=latest USE_MAXTEXT_REQUIREMENTS_FILE=false
 
 set -e
 
@@ -31,6 +33,11 @@ for ARGUMENT in "$@"; do
     export "$KEY"="$VALUE"
     echo "$KEY"="$VALUE"
 done
+
+if [[ ! -v BASEIMAGE ]]; then
+  echo "Erroring out because BASEIMAGE is unset, please set it!"
+  exit 1
+fi
 
 if [[ ! -v PROJECT_ID ]]; then
   echo "Erroring out because PROJECT is unset, please set it!"
@@ -47,6 +54,11 @@ if [[ ! -v IMAGE_TAG ]]; then
   exit 1
 fi
 
+if [[ ! -v USE_MAXTEXT_REQUIREMENTS_FILE ]]; then
+  echo "Erroring out because USE_MAXTEXT_REQUIREMENTS_FILE is unset, please set it!"
+  exit 1
+fi
+
 COMMIT_HASH=$(git rev-parse --short HEAD)
 
 echo "Building JAX SS MaxText at commit hash ${COMMIT_HASH} . . ."  
@@ -54,6 +66,7 @@ echo "Building JAX SS MaxText at commit hash ${COMMIT_HASH} . . ."
 docker build \
   --build-arg JAX_SS_BASEIMAGE=${BASEIMAGE} \
   --build-arg COMMIT_HASH=${COMMIT_HASH} \
+  --build-arg USE_MAXTEXT_REQUIREMENTS_FILE=${USE_MAXTEXT_REQUIREMENTS_FILE} \
   --network=host \
   -t gcr.io/${PROJECT_ID}/${CLOUD_IMAGE_NAME}:${IMAGE_TAG} \
   -f ./maxtext_jax_ss_tpu.Dockerfile .

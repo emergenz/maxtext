@@ -16,8 +16,15 @@ WORKDIR /deps
 COPY . .
 RUN ls .
 
-# Install Python packages from requirements.txt
-RUN pip install -r /deps/requirements.txt
+ARG USE_MAXTEXT_REQUIREMENTS_FILE
+
+# Install MaxText requirements
+RUN if [ "${USE_MAXTEXT_REQUIREMENTS_FILE}" = "true" ]; then \
+        echo "Using MaxText requirements: /deps/requirements.txt" && \
+        pip install -r /deps/requirements.txt; \
+    else \
+        echo "Not using MaxText requirements: /deps/requirements.txt"; \
+    fi
 
 # Run the script available in JAX-SS base image to generate the manifest file
 RUN bash /generate_manifest.sh PREFIX=maxtext COMMIT_HASH=$COMMIT_HASH
