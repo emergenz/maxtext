@@ -351,13 +351,10 @@ class MoeBlock(nn.Module):
     reshaped_intermediate = jnp.reshape(unsort_intermediate, (-1, self.num_experts_per_tok, self.config.emb_dim))
     with jax.named_scope("weight_sum"):
       output = jnp.einsum("BKE,BK -> BE", reshaped_intermediate, reshaped_weights)
-    return output.reshape(-1, self.config.max_target_length, self.config.emb_dim).astype(self.dtype)
+    return output.reshape(int(self.config.per_device_batch_size), -1, self.config.emb_dim).astype(self.dtype)
 
   def megablox(self, inputs, gate_logits, config, w0_kernel, w1_kernel, wo_kernel):
-    # TODO(ranran): need to changes in JAX repo to enable optimized tile_size
-    #               instead of the static default tile_size (512, 512, 512)
-    tile_size = (512, 512, 512)
-
+    tile_size = (512, 1024, 1024)
     def gmm(inputs, kernel, group_sizes):
       hs_shape = inputs.shape
       # pad length is the 1st dimension of tiling size in gmm call
@@ -367,7 +364,7 @@ class MoeBlock(nn.Module):
         inputs = jax.lax.pad(inputs.astype(jnp.float32), 0.0, [(0, pad_length, 0), (0,0,0)])
 
       inputs = inputs.astype(self.dtype)
-      kernel = kernel.astype(self.weight_dtype)
+      kernel = kernel.astype(self.dtype)
       output = mblx.gmm(lhs=inputs,
                         rhs=kernel,
                         group_sizes=group_sizes,

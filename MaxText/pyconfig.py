@@ -92,27 +92,41 @@ def validate_keys(keys):
     assert keys["local_checkpoint_period"] > 0, "A positive local checkpoint period must be specified when using emergency checkpoint"
   else:
     max_logging.log("Not using emergency checkpoint, ignoring local_checkpoint_directory and local_checkpoint_period")
+  if keys["num_experts"] > 1:
+    # Currently, Megablox only supports data parallelism
+    validate_megablox_parallelism(keys)
 
 
 def validate_data_input(keys):
   """validate provided parameters for data input"""
   if keys["dataset_type"] == "hf":
     max_logging.log(
-        f"dataset_type set to hf, will use {keys['hf_path']=}, {keys['hf_data_dir']=} and {keys['hf_data_files']=} to read data"
+        f"dataset_type set to hf, will use {keys['hf_path']=}, {keys['hf_data_dir']=} and {keys['hf_train_files']=} to read data"
     )
     assert keys["hf_path"] != "", "hf_path can't be empty when dataset_type=hf"
-    if not keys['hf_data_files']:
-      keys['hf_data_files'] = None
+    if not keys['hf_train_files']:
+      keys['hf_train_files'] = None
+    if not keys['hf_eval_files']:
+      keys['hf_eval_files'] = None
+    if keys['hf_eval_files']:
+      keys['hf_eval_split'] = 'train'
+    if keys['eval_interval'] > 0:
+      assert keys['hf_eval_split'], "Please specify hf_eval_split or set eval_interval to <=0."
+
   elif keys["dataset_type"] == "grain":
     max_logging.log(
-        f"dataset_type set to grain, will use {keys['grain_data_files']=} as data files, and {keys['grain_worker_count']} workers"
+        f"dataset_type set to grain, will use {keys['grain_train_files']=} as data files, and {keys['grain_worker_count']} workers"
     )
-    assert keys['grain_data_files'] != "", "grain_data_files can't be empty when dataset_type=grain"
+    assert keys['grain_train_files'] != "", "grain_train_files can't be empty when dataset_type=grain"
+    if keys['eval_interval'] > 0:
+      assert keys['grain_eval_files'], "Please specify grain_eval_files or set eval_interval to <=0."
   elif keys["dataset_type"] == "tfds":
     max_logging.log(
         f"dataset_type set to tfds, will use {keys['dataset_path']=} and {keys['dataset_name']=}"
     )
     assert keys['dataset_name'] != "", "dataset_name can't be empty when dataset_type=tfds"
+    if keys['eval_interval'] > 0:
+      assert keys["eval_split"], "Please specify eval_split or set eval_interval to <=0."
 
 def validate_model_name(s: str) -> bool:
   """Validate provided model name."""
@@ -381,12 +395,34 @@ def validate_megablox_parallelism(raw_keys):
                                using_pipeline_parallelism(raw_keys)):
     raise ValueError("Currently we only support Megablox with data parallelism.")
 
+def create_new_logical_axis_rules(old_logical_axis_rules, new_logical_axis_rules):
+  new_logical_axis = set()
+  replacements = []
+  for logical_axis, mesh_axes in new_logical_axis_rules:
+    logical_axis_exists = any(rule for rule in old_logical_axis_rules if rule[0] == logical_axis)
+    if not logical_axis_exists:
+      continue
+    replacements.append((logical_axis, mesh_axes))
+    new_logical_axis.add(logical_axis)
+  old_logical_rules_filtered = [(old_logical_axis, old_mesh_axes) for old_logical_axis, old_mesh_axes
+                                  in old_logical_axis_rules if old_logical_axis not in new_logical_axis]
+  return old_logical_rules_filtered + replacements
+
+
+def update_model_keys(raw_keys, model_keys, key):
+  """Update `key` value in `raw_keys` from the value in `model_keys`. """
+  assert key in model_keys and key in raw_keys
+  if key == 'logical_axis_rules':
+    raw_keys[key] = create_new_logical_axis_rules(
+      old_logical_axis_rules=raw_keys[key],
+      new_logical_axis_rules=model_keys[key])
+    return
+  raw_keys[key] = model_keys[key]
+
 def validate_and_update_keys(raw_keys, model_keys, config_name: str):
   """Validate and update model specific config keys"""
   max_logging.log("Updating following parameters in config\n")
 
-  # Currently, Megablox only supports data parallelism
-  validate_megablox_parallelism(raw_keys)
 
   for k in model_keys:
     max_logging.log(f"{k}: {model_keys[k]}")
@@ -395,7 +431,7 @@ def validate_and_update_keys(raw_keys, model_keys, config_name: str):
     elif not isinstance(raw_keys[k], type(model_keys[k])):
       raise ValueError(f"Type of key:{k} does not match with {type(model_keys[k])}")
     else:
-      raw_keys[k] = model_keys[k]
+      update_model_keys(raw_keys, model_keys, k)
   return raw_keys
 
 
