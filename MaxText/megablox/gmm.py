@@ -22,8 +22,9 @@ import jax
 from jax import lax
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
-from jax.experimental.pallas.ops.tpu.megablox import common
+from megablox import common
 import jax.numpy as jnp
+from aqt.jax.v2 import pallas as aqt_pl
 
 
 partial = functools.partial
@@ -309,6 +310,7 @@ LutFn = Callable[[int, int, int], Optional[tuple[int, int, int]]]
         "tiling",
         "transpose_rhs",
         "interpret",
+        "quantization",
     ],
 )
 def gmm(
@@ -321,6 +323,7 @@ def gmm(
     existing_out: jnp.ndarray | None = None,
     transpose_rhs: bool = False,
     interpret: bool = False,
+    quantization: bool = False,
 ) -> jnp.ndarray:
   """Compute lhs[sizes[i-1]:sizes[i], :] @ rhs for each group 'i'.
 
@@ -336,6 +339,7 @@ def gmm(
     transpose_rhs: True if the rhs needs to be transposed.
     interpret: Whether or not to run the kernel in interpret mode, helpful for
       testing and debugging.
+    quantization: Whether or not to quantize in int8.
 
   Returns:
     A 2d, jnp.ndarray with shape [m, n].
@@ -454,24 +458,43 @@ def gmm(
         dot_general_dims = (((1,), (1,)), ((), ()))
       else:
         dot_general_dims = (((1,), (0,)), ((), ()))
-
+      
       loaded_lhs = lhs[...]
       loaded_rhs = rhs[...]
-      acc_scratch[...] += lax.dot_general(
-          mask_k_rem_lhs(loaded_lhs).astype(input_dtype),
-          mask_k_rem_rhs(loaded_rhs).astype(input_dtype),
-          preferred_element_type=jnp.float32,
-          dimension_numbers=dot_general_dims,
-      )
+      mask_lhs = mask_k_rem_lhs(loaded_lhs).astype(input_dtype)
+      mask_rhs = mask_k_rem_rhs(loaded_rhs).astype(input_dtype)
+
+      if quantization:
+        rhs_axes = (1,) if transpose_rhs else (0,)
+        # TODO: move quant outside of 
+        quant_lhs = aqt_pl.quant(mask_lhs, n_bits=8, calibration_axes=(1,))
+        quant_rhs = aqt_pl.quant(mask_rhs, n_bits=8, calibration_axes=rhs_axes)
+        qtensor_lhs = aqt_pl.load_qtensor(quant_lhs)
+        qtensor_rhs = aqt_pl.load_qtensor(quant_rhs)
+        acc_scratch[...] += aqt_pl.dot_general(
+            qtensor_lhs,
+            qtensor_rhs,
+            preferred_element_type=jnp.float32,
+            dimension_numbers=dot_general_dims,
+        )
+      else:
+        acc_scratch[...] += lax.dot_general(
+            mask_lhs,
+            mask_rhs,
+            preferred_element_type=jnp.float32,
+            dimension_numbers=dot_general_dims,
+        )
 
       if is_last_k_tile:
         _store_accum()
 
+    # breakpoint()
     lax.cond(
         k_i == tiles_k - 1,
         partial(_accum, True),
         partial(_accum, False),
     )
+    # breakpoint()
 
   def lhs_transform_indices(n_i, grid_id, k_i, group_metadata, group_offset):
     # lhs is (m, k). Load the [tm, tk] matrix for this m-tile.
@@ -498,7 +521,7 @@ def gmm(
     del k_i, group_offsets, group_ids, group_offset
     return m_tile_ids[grid_id], n_i
 
-  out_block_spec = pl.BlockSpec((tm, tn), out_transform_indices)
+  out_block_spec = pl.BlockSpec(out_transform_indices, (tm, tn))
   if existing_out is None:
     in_out_block_spec: Any = None
     input_output_aliases = {}
@@ -506,11 +529,11 @@ def gmm(
     in_out_block_spec = out_block_spec
     input_output_aliases = {6: 0}
 
-  lhs_block_spec = pl.BlockSpec((tm, tk), lhs_transform_indices)
+  lhs_block_spec = pl.BlockSpec(lhs_transform_indices, (tm, tk))
   if transpose_rhs:
-    rhs_block_spec = pl.BlockSpec((None, tn, tk), rhs_transform_indices)
+    rhs_block_spec = pl.BlockSpec(rhs_transform_indices, (None, tn, tk))
   else:
-    rhs_block_spec = pl.BlockSpec((None, tk, tn), rhs_transform_indices)
+    rhs_block_spec = pl.BlockSpec(rhs_transform_indices, (None, tk, tn))
 
   lhs_bytes = lhs.size * lhs.itemsize
   rhs_bytes = (k * n) * rhs.itemsize  # We don't read all of rhs
@@ -523,8 +546,10 @@ def gmm(
   cost_estimate = pltpu.CostEstimate(
       flops=flops, bytes_accessed=bytes_accessed, transcendentals=0
   )
-  call_gmm = pl.pallas_call(
+  pallas_call = aqt_pl.pallas_call if quantization else pl.pallas_call
+  call_gmm = pallas_call(
       kernel,
+      debug=True,
       out_shape=jax.ShapeDtypeStruct((m, n), preferred_element_type),
       grid_spec=pltpu.PrefetchScalarGridSpec(
           num_scalar_prefetch=2,
@@ -571,6 +596,7 @@ def gmm(
         "tiling",
         "num_actual_groups",
         "interpret",
+        "quantization",
     ],
 )
 def tgmm(
@@ -583,6 +609,7 @@ def tgmm(
     num_actual_groups: int | None = None,
     existing_out: jnp.ndarray | None = None,
     interpret: bool = False,
+    quantization: bool = False,
 ) -> jnp.ndarray:
   """Compute lhs[:, sizes[i-1]:sizes[i]] @ rhs[sizes[i-1]:sizes[i], :].
 
@@ -599,6 +626,7 @@ def tgmm(
     existing_out: Existing output to write to.
     interpret: Whether or not to run the kernel in interpret mode, helpful for
       testing and debugging.
+    quantization: Whether or not to quantize in int8.
 
   Returns:
     A  3d, jnp.ndarray with shape [num_groups, k, n].
@@ -698,16 +726,28 @@ def tgmm(
           jnp.zeros_like(rhs, jnp.float32),
       )
 
-      acc_scratch[...] += lax.dot(
-          loaded_lhs.astype(input_dtype),
-          loaded_rhs.astype(input_dtype),
-          preferred_element_type=jnp.float32,
-      )
+      if quantization:
+        dot_general_dims = (((loaded_lhs.ndim - 1,), (0,)), ((), ()))
+        quant_lhs = aqt_pl.quant(loaded_lhs.astype(input_dtype), n_bits=8, calibration_axes=(loaded_lhs.ndim - 1,))
+        quant_rhs = aqt_pl.quant(loaded_rhs.astype(input_dtype), n_bits=8, calibration_axes=(0,))
+        qtensor_lhs = aqt_pl.load_qtensor(quant_lhs)
+        qtensor_rhs = aqt_pl.load_qtensor(quant_rhs)
+        acc_scratch[...] += aqt_pl.dot_general(
+            qtensor_lhs,
+            qtensor_rhs,
+            preferred_element_type=jnp.float32,
+            dimension_numbers=dot_general_dims,
+        )
+      else:
+        acc_scratch[...] += lax.dot(
+            loaded_lhs.astype(input_dtype),
+            loaded_rhs.astype(input_dtype),
+            preferred_element_type=jnp.float32,
+        )
 
     is_end_of_grid = grid_id == (pl.num_programs(2) - 1)
     next_grid_id = jnp.where(is_end_of_grid, grid_id, grid_id + 1)
     next_group = group_ids[next_grid_id]
-
     group_is_changing = jnp.logical_or(is_end_of_grid, group != next_group)
 
     @pl.when(group_is_changing)
@@ -740,7 +780,7 @@ def tgmm(
     # "unsharded" domain.
     return group_ids[grid_id] - group_offset[0], k_i, n_i
 
-  out_block_spec = pl.BlockSpec((None, tk, tn), out_transform_indices)
+  out_block_spec = pl.BlockSpec(out_transform_indices, (None, tk, tn))
   if existing_out is None:
     in_out_block_spec: Any = None
     input_output_aliases = {}
@@ -748,8 +788,8 @@ def tgmm(
     in_out_block_spec = out_block_spec
     input_output_aliases = {6: 0}
 
-  lhs_block_spec = pl.BlockSpec((tm, tk), lhs_transform_indices)
-  rhs_block_spec = pl.BlockSpec((tm, tn), rhs_transform_indices)
+  lhs_block_spec = pl.BlockSpec(lhs_transform_indices, (tm, tk))
+  rhs_block_spec = pl.BlockSpec(rhs_transform_indices, (tm, tn))
 
   lhs_bytes = lhs.size * lhs.itemsize
   rhs_bytes = rhs.size * rhs.itemsize
@@ -763,8 +803,10 @@ def tgmm(
       flops=flops, bytes_accessed=bytes_accessed, transcendentals=0
   )
   lhs = lhs.swapaxes(0, 1)
-  call_gmm = pl.pallas_call(
+  pallas_call = aqt_pl.pallas_call if quantization else pl.pallas_call
+  call_gmm = pallas_call(
       kernel,
+      debug=True,
       out_shape=jax.ShapeDtypeStruct(
           (num_actual_groups, k, n), preferred_element_type
       ),
@@ -788,7 +830,6 @@ def tgmm(
       ),
       interpret=interpret,
   )
-
   out = call_gmm(
       group_metadata,
       group_offset,
