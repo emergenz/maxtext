@@ -16,14 +16,12 @@ WORKDIR /deps
 COPY . .
 RUN ls .
 
-ARG USE_MAXTEXT_REQUIREMENTS_FILE
+ARG MAXTEXT_REQUIREMENTS_FILE
 
-# Install MaxText requirements
-RUN if [ "${USE_MAXTEXT_REQUIREMENTS_FILE}" = "true" ]; then \
-        echo "Using MaxText requirements: /deps/requirements.txt" && \
-        pip install -r /deps/requirements.txt; \
-    else \
-        echo "Not using MaxText requirements: /deps/requirements.txt"; \
+# Install Maxtext requirements
+RUN if [ ! -z "${MAXTEXT_REQUIREMENTS_FILE}" ]; then \
+        echo "Using Maxtext requirements: ${MAXTEXT_REQUIREMENTS_FILE}" && \
+        pip install -r /deps/${MAXTEXT_REQUIREMENTS_FILE}; \
     fi
 
 # Run the script available in JAX-SS base image to generate the manifest file
